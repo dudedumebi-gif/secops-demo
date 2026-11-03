@@ -5,6 +5,7 @@ Run from omnibrain/:
     python3 server.py            # http://localhost:8765
     python3 server.py --reset    # delete the local SQLite DB and reseed
     PORT=9000 python3 server.py  # override the port
+    HOST=0.0.0.0 python3 server.py  # Render / LAN bind (default 127.0.0.1 locally)
 
 No install step, no API keys, no external services. The AI assistant
 (Ask / Triage / Draft) is rule-based and runs offline over the live
@@ -17,14 +18,15 @@ import os
 import re
 import sqlite3
 import sys
-from datetime import date
+from datetime import date, datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PUBLIC = os.path.join(BASE, "public")
 DB_PATH = os.path.join(BASE, "omnibrain.db")
 PORT = int(os.environ.get("PORT", "8765"))
+HOST = os.environ.get("HOST", "127.0.0.1")
 
 # ---------------------------------------------------------------- MTTR thresholds
 # Industry benchmarks, NOT a single official NIST/ISO MTTR standard.
@@ -51,6 +53,19 @@ TECHNIQUE_MAP = {
     "T1071.004": ("DNS", "Command and Control", []),
     "T1098": ("Account Manipulation", "Persistence", []),
     "T1486": ("Data Encrypted for Impact", "Impact", []),
+    "T1190": ("Exploit Public-Facing Application", "Initial Access", []),
+    "T1133": ("External Remote Services", "Persistence", ["Initial Access"]),
+    "T1566": ("Phishing", "Initial Access", []),
+    "T1548": ("Abuse Elevation Control Mechanism", "Privilege Escalation", []),
+    "T1068": ("Exploitation for Privilege Escalation", "Privilege Escalation", []),
+    "T1083": ("File and Directory Discovery", "Discovery", []),
+    "T1087": ("Account Discovery", "Discovery", []),
+    "T1021": ("Remote Services", "Lateral Movement", []),
+    "T1005": ("Data from Local System", "Collection", []),
+    "T1048": ("Exfiltration Over Alternative Protocol", "Exfiltration", []),
+    "T1595": ("Active Scanning", "Reconnaissance", []),
+    "T1583": ("Acquire Infrastructure", "Resource Development", []),
+    "T1588": ("Obtain Capabilities", "Resource Development", []),
 }
 
 # ---------------------------------------------------------------- seed data
@@ -171,6 +186,8 @@ CREATE TABLE IF NOT EXISTS briefs (id INTEGER PRIMARY KEY AUTOINCREMENT, created
   text TEXT NOT NULL, kpis TEXT DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS incidents (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
   severity TEXT NOT NULL, mttr_mins REAL NOT NULL, created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS threat_intel_cache (id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source TEXT NOT NULL, fetched_at TEXT NOT NULL, payload_json TEXT DEFAULT '[]');
 """
 
 
@@ -344,8 +361,201 @@ def mitre_heatmap(conn):
             "tactics_covered": covered, "tactics_partial": partial, "tactics_gap": len(gaps),
             "gaps": gaps,
             "lowest_coverage_tactics": [t["tactic"] for t in lowest],
+            "mitigations": mitigations_for_gaps(gaps),
+            "primary_tactic_gap_note": "Some gaps are primary-tactic only — e.g. T1078 also covers Initial Access and T1550 also covers Lateral Movement as secondary tactics, so those tactics are not wholly blind, they just lack a primary-tactic detection.",
             "note": "Derived from live detections; technique coverage_score: 0=no detection, 1=Idea/Development, 2=Testing/Tuning/Deployment, 3=Production."}
 
+
+
+# ---------------------------------------------------------------- MITRE gap mitigations
+# Priority order (user-agreed): P0 attacker progression first, then data loss,
+# then early warning, then threat-intel monitoring.
+MITIGATION_PRIORITY = {"Initial Access": 0, "Privilege Escalation": 0, "Lateral Movement": 0,
+                       "Exfiltration": 1, "Collection": 1,
+                       "Discovery": 2, "Reconnaissance": 2, "Resource Development": 3}
+MITRE_MITIGATIONS = {
+    "Initial Access": {"tactic": "Initial Access", "recommended_detection": "Detect exploitation of public-facing applications and phishing",
+                      "technique": "T1190", "also_technique": "T1566", "log_source_needed": "WAF + web server logs, email gateway logs",
+                      "nist_function": "Detect", "effort": "M", "priority": "P0",
+                      "suggested_backlog_title": "Add Initial Access detection: public-facing exploit (T1190) + phishing (T1566)"},
+    "Privilege Escalation": {"tactic": "Privilege Escalation", "recommended_detection": "Detect elevation control abuse and privilege escalation exploits",
+                      "technique": "T1548", "also_technique": "T1068", "log_source_needed": "EDR process + privilege-change logs, CloudTrail",
+                      "nist_function": "Detect", "effort": "M", "priority": "P0",
+                      "suggested_backlog_title": "Add Privilege Escalation detection (T1548/T1068)"},
+    "Lateral Movement": {"tactic": "Lateral Movement", "recommended_detection": "Detect remote service abuse",
+                      "technique": "T1021", "also_technique": "", "log_source_needed": "Network flow + EDR lateral movement logs, VPN/RDP logs",
+                      "nist_function": "Detect", "effort": "M", "priority": "P0",
+                      "suggested_backlog_title": "Add Lateral Movement detection via remote services (T1021)"},
+    "Exfiltration": {"tactic": "Exfiltration", "recommended_detection": "Detect exfiltration over alternative protocol",
+                      "technique": "T1048", "also_technique": "", "log_source_needed": "Network egress + DNS + proxy logs, DLP",
+                      "nist_function": "Detect", "effort": "M", "priority": "P1",
+                      "suggested_backlog_title": "Add Exfiltration detection (T1048)"},
+    "Collection": {"tactic": "Collection", "recommended_detection": "Detect local system data collection",
+                      "technique": "T1005", "also_technique": "", "log_source_needed": "EDR file access + DLP logs",
+                      "nist_function": "Detect", "effort": "S", "priority": "P1",
+                      "suggested_backlog_title": "Add Collection detection (T1005)"},
+    "Discovery": {"tactic": "Discovery", "recommended_detection": "Detect file/directory and account discovery",
+                      "technique": "T1083", "also_technique": "T1087", "log_source_needed": "EDR + audit logs (process, file access, account queries)",
+                      "nist_function": "Detect", "effort": "S", "priority": "P1",
+                      "suggested_backlog_title": "Add Discovery detection (T1083/T1087)"},
+    "Reconnaissance": {"tactic": "Reconnaissance", "recommended_detection": "Detect active scanning and external enumeration",
+                      "technique": "T1595", "also_technique": "", "log_source_needed": "Internet-facing asset / WAF + firewall logs, external attack surface feed",
+                      "nist_function": "Detect", "effort": "M", "priority": "P2",
+                      "suggested_backlog_title": "Add Active Scanning (T1595) detection"},
+    "Resource Development": {"tactic": "Resource Development", "recommended_detection": "Monitor adversary infrastructure and capability acquisition",
+                      "technique": "T1583", "also_technique": "T1588", "log_source_needed": "Threat-intel feeds (CISA/MITRE/abuse.ch) + domain registration monitoring",
+                      "nist_function": "Identify", "effort": "M", "priority": "P2",
+                      "suggested_backlog_title": "Add threat-intel monitoring for infrastructure/capability acquisition (T1583/T1588)"},
+}
+
+def mitigations_for_gaps(gaps):
+    out = [dict(MITRE_MITIGATIONS[g]) for g in gaps if g in MITRE_MITIGATIONS]
+    out.sort(key=lambda m: (MITIGATION_PRIORITY.get(m["tactic"], 9), m["tactic"]))
+    return out
+
+# ---------------------------------------------------------------- rule-based reasoning, steps 1-3
+# Step 1 MITRE keyword rules: (keywords, technique, confidence)
+MITRE_KEYWORDS = [
+    (["powershell", "encodedcommand"], "T1059.001", "high"),
+    (["lsass", "credential dumping", "credential dump"], "T1003.001", "high"),
+    (["brute force", "password spraying"], "T1110", "high"),
+    (["token replay", "impossible travel"], "T1078", "high"),
+    (["token reuse", "alternate authentication"], "T1550", "high"),
+    (["ransomware", "data encrypted"], "T1486", "high"),
+    (["phishing", "phish"], "T1566", "high"),
+    (["dns tunneling", "dns tunnel", "c2", "command and control"], "T1071.004", "high"),
+    (["account manipulation", "policy attach", "new key creation"], "T1098", "high"),
+    (["privilege escalation", "elevation control"], "T1548", "high"),
+    (["public-facing", "public facing", "web exploit", "exploit public"], "T1190", "medium"),
+    (["remote services", "rdp", "lateral movement", "lateral"], "T1021", "medium"),
+    (["active scanning", "scanning", "reconnaissance", "enumeration"], "T1595", "medium"),
+    (["file discovery", "directory discovery"], "T1083", "medium"),
+    (["account discovery"], "T1087", "medium"),
+    (["exfiltration", "exfil", "data loss"], "T1048", "medium"),
+    (["local system", "data collection", "collection"], "T1005", "medium"),
+    (["external remote", "vpn gateway"], "T1133", "medium"),
+    (["infrastructure acquisition", "capability acquisition"], "T1583", "medium"),
+]
+
+def step1_mitre(text):
+    low = (text or "").lower()
+    for keywords, code, conf in MITRE_KEYWORDS:
+        hits = [k for k in keywords if k in low]
+        if hits:
+            name, tactic, related = TECHNIQUE_MAP.get(code, (code, "Unknown", []))
+            return {"technique": code, "technique_name": name, "tactic": tactic,
+                    "related_tactics": related, "confidence": conf, "evidence_keywords": hits}
+    return {"technique": None, "technique_name": None, "tactic": None,
+            "related_tactics": [], "confidence": "low", "evidence_keywords": [],
+            "note": "no MITRE technique matched — human review required"}
+
+def step2_nist(text):
+    low = (text or "").lower()
+    if any(w in low for w in ["approval", "governance", "owner", "policy", "oversight", "role"]):
+        return {"function": "Govern", "category": "Roles, Responsibilities, and Authorities (GV.RR)",
+                "rationale": "Approval, ownership, policy or oversight is the governing control for this request."}
+    if any(w in low for w in ["rollback", "recover", "restore", "lessons learned", "lessons"]):
+        return {"function": "Recover", "category": "Incident Recovery Plan Execution (RC.RP)",
+                "rationale": "Rollback, recovery and lessons learned sit in Recover."}
+    if any(w in low for w in ["isolate", "contain", "disable", "block", "purge", "respond", "incident"]):
+        return {"function": "Respond", "category": "Incident Mitigation (RS.MI)",
+                "rationale": "Containment and response actions sit in Respond."}
+    if any(w in low for w in ["asset", "inventory", "cmdb", "criticality"]):
+        return {"function": "Identify", "category": "Asset Management (ID.AM)",
+                "rationale": "Asset inventory and criticality sit in Identify."}
+    if any(w in low for w in ["mfa", "allowlist", "access control", "authentication", "patch"]):
+        return {"function": "Protect", "category": "Identity Management, Authentication and Access Control (PR.AA)",
+                "rationale": "MFA, allowlisting and access control sit in Protect."}
+    return {"function": "Detect", "category": "Continuous Monitoring (DE.CM)",
+            "rationale": "Detection, alerting, telemetry and log coverage sit in Detect."}
+
+def reason_about(text, triage_rec=None):
+    s1 = step1_mitre(text)
+    s2 = step2_nist(text)
+    if triage_rec:
+        priority, owner = triage_rec.get("priority", "P2"), triage_rec.get("team", "Platform")
+        approval = bool(triage_rec.get("type") == "soar" and triage_rec.get("impact", 0) >= 9) or priority == "P0"
+        success = triage_rec.get("acceptance", "Fidelity, FP rate, MTTR and adoption measured 30 days post-launch.")
+    else:
+        low = (text or "").lower()
+        priority = "P0" if ("critical" in low or "ransomware" in low) else "P2"
+        owner = "Detection Eng" if s1["tactic"] else "Platform"
+        approval = any(w in low for w in ["isolate", "disable", "critical", "high-impact", "high impact"])
+        success = "Fidelity, FP rate, MTTR and adoption measured 30 days post-launch."
+    launch_gate = ["Runbook written and linked", "Owner + support model named", "Success criteria + KPI defined",
+                   "Analyst training / enablement done", "Test evidence (backtest / staging) attached",
+                   "Rollback plan documented", "Documentation published"]
+    s3 = {"priority": priority, "owner": owner, "approval_required": approval,
+          "launch_gate": launch_gate, "success_criteria": success}
+    return {"step1_mitre": s1, "step2_nist": s2, "step3_decision": s3}
+
+# ---------------------------------------------------------------- free public threat intel (external context only)
+THREAT_INTEL_NOTE = "public external threat context, not internal telemetry"
+MITRE_STIX_URL = "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json"
+
+def _fetch_json(url, timeout=10):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "omnibrain-demo/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode())
+
+def _fetch_text(url, timeout=10):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "omnibrain-demo/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read().decode(errors="replace")
+
+def fetch_threat_intel():
+    fetched_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    results = []
+    # CISA KEV — free, no auth, most recent by dateAdded, cap 5.
+    try:
+        data = _fetch_json("https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json")
+        vulns = sorted(data.get("vulnerabilities", []), key=lambda v: v.get("dateAdded", ""), reverse=True)[:5]
+        items = [{"cveID": v.get("cveID"), "vendorProject": v.get("vendorProject"), "product": v.get("product"),
+                  "dateAdded": v.get("dateAdded"), "vulnerabilityName": v.get("vulnerabilityName")} for v in vulns]
+        results.append({"source": "CISA KEV", "status": "ok", "count": len(items), "items": items, "fetched_at": fetched_at})
+    except Exception as e:
+        results.append({"source": "CISA KEV", "status": "failed", "count": 0, "items": [], "error": str(e)[:200], "fetched_at": fetched_at})
+    # abuse.ch URLhaus — NOT attempted: verified 2026-11-03 that its public
+    # no-key downloads now return 410 Gone and its v1 recent endpoint returns
+    # Unauthorized; abuse.ch now gates those exports behind an API key. This
+    # app takes no keys, so the source is documented as key-gated only.
+    results.append({"source": "abuse.ch URLhaus", "status": "unavailable", "count": 0, "items": [],
+                    "error": "Public no-key downloads are key-gated as of Nov 2026 (410 Gone / Unauthorized); not attempted without a key.",
+                    "fetched_at": fetched_at})
+    # NVD — free, no key, rate-limited, best-effort only, cap 5. The default
+    # listing is oldest-first, so filter to the last 7 days to get recent CVEs.
+    try:
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        start = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        end = now.strftime("%Y-%m-%dT%H:%M:%S.999Z")
+        data = _fetch_json(f"https://services.nvd.nist.gov/rest/json/cves/2.0?resultsPerPage=5&pubStartDate={start}&pubEndDate={end}")
+        items = []
+        for v in data.get("vulnerabilities", [])[:5]:
+            cve = v.get("cve", {})
+            descs = cve.get("descriptions", [])
+            items.append({"id": cve.get("id"), "published": cve.get("published", ""), "description": (descs[0].get("value", "")[:200] if descs else "")})
+        results.append({"source": "NVD CVE", "status": "ok", "count": len(items), "items": items, "fetched_at": fetched_at})
+    except Exception as e:
+        results.append({"source": "NVD CVE", "status": "failed", "count": 0, "items": [], "error": str(e)[:200], "fetched_at": fetched_at})
+    return results
+
+def threat_intel_summary(conn):
+    cached = rows(conn, "SELECT * FROM threat_intel_cache ORDER BY id")
+    sources = []
+    for r in cached:
+        try:
+            items = json.loads(r["payload_json"] or "[]")
+        except Exception:
+            items = []
+        sources.append({"source": r["source"], "fetched_at": r["fetched_at"], "count": len(items), "items": items})
+    fetched = max([s["fetched_at"] for s in sources], default=None)
+    return {"sources": sources, "fetched_at": fetched,
+            "status": "cached" if sources else "empty",
+            "note": THREAT_INTEL_NOTE,
+            "mitre_note": "MITRE enrichment is the local technique/tactic mapping; full STIX bundle is NOT downloaded at runtime (too large). Future offline snapshot source: " + MITRE_STIX_URL}
 
 def make_brief(conn):
     k = kpis(conn)
@@ -407,10 +617,16 @@ def triage_recommendation(text):
         priority = "P2"
     else:
         priority = "P3"
-    return {"title": title, "type": kind, "team": team, "reach": r, "impact": i, "confidence": c,
-            "effort": e, "rice": rice(r, i, c, e), "priority": priority,
-            "acceptance": acc, "risks": risks,
-            "description": f"Triaged from stakeholder request: {text.strip()[:300]}"}
+    rec = {"title": title, "type": kind, "team": team, "reach": r, "impact": i, "confidence": c,
+           "effort": e, "rice": rice(r, i, c, e), "priority": priority,
+           "acceptance": acc, "risks": risks,
+           "description": f"Triaged from stakeholder request: {text.strip()[:300]}"}
+    reasoning = reason_about(text, triage_rec=rec)
+    rec["reasoning"] = reasoning
+    rec["step1_mitre"] = reasoning["step1_mitre"]
+    rec["step2_nist"] = reasoning["step2_nist"]
+    rec["step3_decision"] = reasoning["step3_decision"]
+    return rec
 
 
 def ask_answer(conn, question):
@@ -447,7 +663,12 @@ def ask_answer(conn, question):
     summary = (f"Grounded in the live workspace (fidelity {k['fidelity']}%, coverage {k['coverage']}%, "
                f"MTTR {k['mttr_mins']:g}m, {k['open_backlog']} open backlog items): "
                f"prioritise signal quality before breadth — fix the noisiest detection and unblock telemetry before adding new coverage.")
+    reasoning = reason_about(question)
     return {"summary": summary, "actions": actions,
+            "reasoning": reasoning,
+            "step1_mitre": reasoning["step1_mitre"],
+            "step2_nist": reasoning["step2_nist"],
+            "step3_decision": reasoning["step3_decision"],
             "referenced_titles": [r["title"] for r in ranked_b[:3]] + [r["name"] for r in ranked_d[:2]],
             "risks": risks,
             "next_steps": ["Assign an owner and a success criterion to the top action above.",
@@ -464,7 +685,8 @@ def draft_doc(conn, kind, backlog_id, topic):
         if not item:
             return None
     title = item["title"] if item else (topic or "Untitled SecOps capability")
-    base = f"# {title}\n\nSimulated data for demonstration. "
+    reasoning = reason_about((item["title"] + " " + item["description"]) if item else (topic or ""))
+    base = f"# {title}\n\nSimulated data for demonstration.\n\n## Reasoning — Steps 1-3\n\nStep 1 MITRE: {reasoning['step1_mitre']}\n\nStep 2 NIST CSF 2.0: {reasoning['step2_nist']}\n\nStep 3 Decision: {reasoning['step3_decision']}\n\n"
     if item:
         base += f"Backlog item: {item['title']} ({item['team']}, {item['priority']}, RICE {item['rice']}, status {item['status']}).\n\nValue: {item['value_statement']}\n\nAcceptance criteria: {item['acceptance']}\n"
     else:
@@ -475,7 +697,9 @@ def draft_doc(conn, kind, backlog_id, topic):
         doc = base + "\n## When to use this\nWhen this alert fires in the SOC queue.\n\n## Steps\n1. Enrich the alert (asset, identity, owner).\n2. Confirm true vs false positive against the acceptance criteria.\n3. Contain only through an approved playbook — high-impact actions need human approval.\n4. Log the outcome and feed it back into tuning.\n\n## Rollback\nRevert the rule/playbook change and notify the SOC Lead.\n"
     else:
         doc = base + "\n## Rollout phases\n1. Staging / backtest.\n2. Pilot cohort with analyst validation.\n3. Full rollout only after training, runbook, and rollback are done.\n\n## Launch gates (all must pass)\nRunbook, owner + support model, success criteria, analyst training, test evidence, rollback plan, documentation.\n\n## Rollback\nStop the rollout and revert within the documented window; notify stakeholders.\n"
-    return {"kind": kind, "title": title, "document": doc}
+    return {"kind": kind, "title": title, "document": doc, "reasoning": reasoning,
+            "step1_mitre": reasoning["step1_mitre"], "step2_nist": reasoning["step2_nist"],
+            "step3_decision": reasoning["step3_decision"]}
 
 
 # ---------------------------------------------------------------- HTTP layer
@@ -500,6 +724,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/api/threat-intel":
+            conn = db()
+            out = threat_intel_summary(conn)
+            conn.close()
+            return self.send_json(200, out)
         if parsed.path == "/api/mitre":
             conn = db()
             out = mitre_heatmap(conn)
@@ -513,6 +742,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/dashboard":
             conn = db()
             out = {"kpis": kpis(conn), "brief": make_brief(conn), "mitre_heatmap": mitre_heatmap(conn),
+                   "threat_intel": threat_intel_summary(conn),
                    "incidents": rows(conn, "SELECT * FROM incidents ORDER BY id"),
                    "backlog": rows(conn, "SELECT * FROM backlog ORDER BY rice DESC"),
                    "detections": rows(conn, "SELECT * FROM detections"),
@@ -553,7 +783,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def route(self, write=False):
         parsed = urlparse(self.path)
-        parts = [p for p in parsed.path.split("/") if p]
+        parts = [unquote(p) for p in parsed.path.split("/") if p]
         body = self.read_json()
         if body is None:
             return self.send_json(400, {"error": "invalid JSON"})
@@ -743,6 +973,35 @@ class Handler(BaseHTTPRequestHandler):
             la["checks"] = checks
             la["launch_status"] = launch_status(checks)
             return self.send_json(200, la)
+        if parts == ["threat-intel", "refresh"] and self.command == "POST":
+            results = fetch_threat_intel()
+            for r in results:
+                if r["status"] == "ok":
+                    conn.execute("DELETE FROM threat_intel_cache WHERE source=?", (r["source"],))
+                    conn.execute("INSERT INTO threat_intel_cache (source, fetched_at, payload_json) VALUES (?,?,?)",
+                                 (r["source"], r["fetched_at"], json.dumps(r["items"])))
+            conn.commit()
+            ok = any(r["status"] == "ok" for r in results)
+            return self.send_json(200, {"sources": results, "status": "ok" if ok else "offline",
+                                        "note": THREAT_INTEL_NOTE})
+        if len(parts) == 4 and parts[0] == "mitre" and parts[1] == "mitigations" and parts[3] == "create-backlog" and self.command == "POST":
+            tactic = parts[2]
+            mit = MITRE_MITIGATIONS.get(tactic)
+            if not mit:
+                return self.send_json(404, {"error": f"no mitigation for tactic {tactic}"})
+            eff_map = {"S": 2, "M": 5, "L": 8}
+            reach, impact = (9, 9) if mit["priority"] == "P0" else ((8, 8) if mit["priority"] == "P1" else (7, 6))
+            effort = eff_map.get(mit["effort"], 5)
+            r = rice(reach, impact, 80, effort)
+            typ = "telemetry" if tactic == "Resource Development" else "detection"
+            team = "Platform" if tactic == "Resource Development" else "Detection Eng"
+            cur = conn.execute(
+                "INSERT INTO backlog (title, description, type, team, requester, priority, status, reach, impact, confidence, effort, rice, value_statement, acceptance) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (mit["suggested_backlog_title"], f"Mitigation for MITRE gap {tactic}: {mit['recommended_detection']} ({mit['technique']}). Log source needed: {mit['log_source_needed']}. NIST function: {mit['nist_function']}.",
+                 typ, team, "MITRE gap review", mit["priority"], "intake", reach, impact, 80, effort, r,
+                 f"Close MITRE {tactic} gap with {mit['technique']}.", "Backtest, FP <5%, runbook + analyst validation"))
+            conn.commit()
+            return self.send_json(201, get_one("backlog", cur.lastrowid))
         return self.send_json(404, {"error": "not found"})
 
 
@@ -752,8 +1011,8 @@ def main():
             os.remove(DB_PATH)
         print("reset: database removed, will reseed on start")
     init_db()
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"OmniBrain running at http://localhost:{PORT}  (Ctrl+C to stop)")
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    print(f"OmniBrain running at http://{HOST}:{PORT}  (Ctrl+C to stop)")
     print(f"Database: {DB_PATH}")
     try:
         server.serve_forever()
