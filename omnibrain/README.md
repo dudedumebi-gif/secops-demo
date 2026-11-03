@@ -1,24 +1,80 @@
-# OmniBrain AI Agent (SPM-Dums) — workspace documentation
+# OmniBrain — SecOps product-management app (runnable)
 
-OmniBrain is a private, server-backed SecOps product-management app. It is **not** a static site, so it cannot be exported as HTML the way `soc-demo/` can. This folder documents what it does, its actions, and its seeded workspace, so the product work is reviewable from this repo without claiming the live app's code is here.
+OmniBrain does the Senior Product Manager, SecOps product work behind a SOC
+console: intake and RICE-ranked backlog, detection lifecycle, telemetry
+onboarding, SOAR governance with approval gates, roadmap and launch
+readiness, metrics and operating cadence, and an assistant grounded in the
+live workspace.
 
-## What it does — Senior PM, SecOps work
-- **Mission Control + AI Daily Brief:** fidelity 79%, MTTR 38m, coverage 66%, 1,176 hours saved (seeded snapshot, 2026-11-03)
-- **Intake & Backlog:** structured intake, AI triage, automatic RICE ranking (8 items in the seeded workspace)
-- **Detection Lifecycle:** 7 stages, 8 detections, with fidelity and false-positive tracking
-- **Telemetry onboarding:** 7 sources queued/prioritised; Kubernetes audit logs (EKS) flagged Blocked in the seeded snapshot
-- **SOAR governance:** 6 playbooks; Low-risk enrichment auto-runs, High/Critical actions require human approval, audit log, and rollback
-- **Roadmap + decisions:** Now / Next / Later roadmap (6 items) + decision log (2)
-- **Launch Readiness:** checklists that block a launch until runbook, training, support, and success measures are done
-- **Ask OmniBrain:** AI assistant grounded in the live workspace — prioritises, explains risk, drafts PRDs / runbooks / launch plans
+All data is **simulated for demonstration**. Seeded rows are derived from
+the Senior PM, SecOps job scope, not live employer data. No employer
+branding is used.
 
-## Actions (live app)
-approveplaybook, askagent, createbacklog, createdecision, createdetection, createlaunch, createplaybook, createroadmap, createtelemetry, deletebacklog, draftdocument, getdashboard, movedetection, refreshdailybrief, togglelaunchcheck, triagewithai, updatebacklogstatus, updateplaybookstatus, updatetelemetrystatus
+## Run it (no install, no API keys)
 
-See `workspace-summary.md` for the seeded KPIs, backlog, detections, telemetry, playbooks, roadmap, decisions, and launches.
+Requirements: Python 3 only — standard library only
+(`http.server`, `sqlite3`, `json`, `urllib`). No npm, no pip packages,
+no external services.
 
-## Honest limits
-- Seeded rows are a working workspace derived from the Senior PM, SecOps job description, not live employer data.
-- No live connection to a real SIEM, SOAR, Jira, or Slack in this snapshot.
-- High/Critical playbooks still require a human approver, by design.
-- All data here is simulated for demonstration.
+```bash
+cd omnibrain
+python3 server.py
+```
+
+Then open http://localhost:8765
+
+- Port override: `PORT=9000 python3 server.py`
+- Reset to the seed data: `python3 server.py --reset`
+  (deletes `omnibrain.db`; it is recreated and seeded on first run)
+
+Data is saved locally to `omnibrain.db` (SQLite, git-ignored). Edits in
+the UI persist across restarts. The SOC demo in the parent repo is
+different: it saves nothing.
+
+## What is inside
+
+- `server.py` — HTTP server + JSON API + SQLite store + offline,
+  rule-based assistant (keyword matching, RICE-grounded prioritisation,
+  template drafts). It never calls an external service.
+- `public/index.html`, `public/app.js`, `public/styles.css` — vanilla
+  JavaScript frontend, no build step. Tabs: Mission Control, Backlog,
+  Detections, Telemetry, SOAR, Roadmap, Launches, Ask OmniBrain.
+- `workspace-summary.md` — seed snapshot reference for the workspace
+  the app starts with.
+
+## Key behaviours to try
+
+- **Approval gate:** High / Critical playbooks require a named
+  approver. Approving “Isolate endpoint (EDR)” with no approver fails
+  with HTTP 400 and its status stays In Review; with an approver it
+  moves to Approved.
+- **Launch gate:** “Composite: auth anomaly chain — v2 rollout”
+  shows BLOCKED until every checklist item is ticked.
+- **RICE:** backlog RICE is computed as
+  `reach × impact × (confidence / 100) / effort`, e.g.
+  10 × 8 × 0.80 / 4 = 16.0.
+- **Ask / Triage / Draft:** grounded only in rows actually in the
+  database — Ask references real backlog, detection, and telemetry
+  titles; it does not invent detections or sources.
+
+## API (JSON in/out)
+
+- `GET /api/dashboard` — KPIs recomputed from live tables, brief, all lists
+- `POST /api/backlog` (auto-computes RICE), `PATCH /api/backlog/{id}`,
+  `DELETE /api/backlog/{id}`
+- `POST /api/triage {text, save?}` — structured scored recommendation
+- `POST /api/detections`, `PATCH /api/detections/{id} {stage}`
+- `POST /api/telemetry`, `PATCH /api/telemetry/{id} {status, coverage}`
+- `POST /api/playbooks`, `POST /api/playbooks/{id}/approve {approver}`,
+  `PATCH /api/playbooks/{id} {status}`
+- `POST /api/roadmap`, `POST /api/decisions`, `POST /api/launches`,
+  `POST /api/launches/{id}/checks/{index}/toggle`
+- `POST /api/ask {question}`, `POST /api/draft {kind, backlog_id?, topic?}`,
+  `POST /api/refresh-brief`
+
+## Optional real LLM (never required)
+
+If you later want a real LLM, set `OMNIBRAIN_LLM_URL` to an endpoint
+you control and wire it into `ask_answer` — the offline, rule-based
+path remains the default and the app runs fully without it. No key
+is read from the app by default.
