@@ -24,3 +24,5 @@ pre{white-space:pre-wrap;background:#fff;border:1px solid var(--line);padding:12
 .tech-cell.score-3{background:#ed1c24;color:#fff;border-color:#c11119}.tech-cell.score-3 span{color:#fff}
 .tech-cell.score-2{background:#fca5a5}.tech-cell.score-1{background:#fee2e2}.tech-cell.gap{background:#e5e7eb;color:#4c5568}
 form{background:#fff;border:1px solid var(--line);padding:12px;border-radius:8px;margin:12px 0}
+
+.mitigation-note{font-size:13px;color:var(--muted)}
