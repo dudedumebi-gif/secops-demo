@@ -26,6 +26,33 @@ PUBLIC = os.path.join(BASE, "public")
 DB_PATH = os.path.join(BASE, "omnibrain.db")
 PORT = int(os.environ.get("PORT", "8765"))
 
+# ---------------------------------------------------------------- MTTR thresholds
+# Industry benchmarks, NOT a single official NIST/ISO MTTR standard.
+# There is no official NIST/ISO MTTR threshold; the values below are
+# commonly used industry benchmarks, configurable here. The overall
+# 120-240 minute (2-4 hour) range is a reference range, not a hard
+# threshold. Seed incident rows are simulated samples (see INCIDENTS).
+MTTR_THRESHOLDS = {"Critical": 60, "High": 120, "Medium": 240, "Low": 480}
+MTTR_BENCHMARK_RANGE_MINS = (120, 240)
+MTTR_SEED_BASELINE_MINS = 38.0
+
+# MITRE ATT&CK Enterprise tactics, in canonical order.
+TACTICS = ["Reconnaissance", "Resource Development", "Initial Access", "Execution",
+           "Persistence", "Privilege Escalation", "Defense Evasion", "Credential Access",
+           "Discovery", "Lateral Movement", "Collection", "Command and Control",
+           "Exfiltration", "Impact"]
+# technique -> (name, primary_tactic, related_tactics)
+TECHNIQUE_MAP = {
+    "T1078": ("Valid Accounts", "Persistence", ["Initial Access", "Privilege Escalation", "Defense Evasion"]),
+    "T1550": ("Use Alternate Authentication Material", "Defense Evasion", ["Lateral Movement", "Persistence"]),
+    "T1059.001": ("PowerShell", "Execution", []),
+    "T1003.001": ("LSASS Memory", "Credential Access", []),
+    "T1110": ("Brute Force", "Credential Access", []),
+    "T1071.004": ("DNS", "Command and Control", []),
+    "T1098": ("Account Manipulation", "Persistence", []),
+    "T1486": ("Data Encrypted for Impact", "Impact", []),
+}
+
 # ---------------------------------------------------------------- seed data
 BACKLOG = [
     # title, description, type, team, requester, priority, status, R, I, C, E, value, acceptance
@@ -142,6 +169,8 @@ CREATE TABLE IF NOT EXISTS launches (id INTEGER PRIMARY KEY AUTOINCREMENT, name 
   type TEXT DEFAULT 'Detection', owner TEXT DEFAULT '', target_date TEXT DEFAULT '', checks TEXT DEFAULT '[]');
 CREATE TABLE IF NOT EXISTS briefs (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,
   text TEXT NOT NULL, kpis TEXT DEFAULT '{}');
+CREATE TABLE IF NOT EXISTS incidents (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
+  severity TEXT NOT NULL, mttr_mins REAL NOT NULL, created_at TEXT NOT NULL);
 """
 
 
@@ -184,11 +213,53 @@ def init_db():
                      ("Composite: auth anomaly chain — v2 rollout", "Detection", "Detection Eng", "2026-11-14",
                       json.dumps([{"label": l, "done": bool(v)} for l, v in LAUNCH_CHECKS])))
         conn.commit()
+    # Seed incidents independently (also covers pre-existing DBs created
+    # before the incidents table existed). Three Critical samples averaging
+    # exactly 38 minutes: (32 + 38 + 44) / 3 = 38. Simulated samples only.
+    if conn.execute("SELECT COUNT(*) FROM incidents").fetchone()[0] == 0:
+        for title, mins in [("Sample incident — ransomware containment (simulated)", 32),
+                            ("Sample incident — compromised account response (simulated)", 38),
+                            ("Sample incident — phishing mailbox purge (simulated)", 44)]:
+            conn.execute("INSERT INTO incidents (title, severity, mttr_mins, created_at) VALUES (?,?,?,?)",
+                         (title, "Critical", mins, date.today().isoformat()))
+        conn.commit()
     conn.close()
 
 
 def rows(conn, sql, args=()):
     return [dict(r) for r in conn.execute(sql, args).fetchall()]
+
+
+def _mean(vals):
+    return round(sum(vals) / len(vals), 1) if vals else None
+
+
+def _median(vals):
+    if not vals:
+        return None
+    s = sorted(vals)
+    n = len(s)
+    return round(s[n // 2], 1) if n % 2 else round((s[n // 2 - 1] + s[n // 2]) / 2, 1)
+
+
+def mttr_stats(conn):
+    """MTTR computed from the incidents table, never a hardcoded constant
+    when rows exist. Empty table -> seed baseline 38.0 (documented)."""
+    inc = rows(conn, "SELECT * FROM incidents")
+    if not inc:
+        by_sev = {sev: {"mean": None, "median": None, "count": 0,
+                         "threshold_mins": MTTR_THRESHOLDS[sev], "status": "no_data"}
+                  for sev in MTTR_THRESHOLDS}
+        return {"mttr_mins": MTTR_SEED_BASELINE_MINS, "mttr_by_severity": by_sev,
+                "mttr_source": "seed baseline"}
+    by_sev = {}
+    for sev, thr in MTTR_THRESHOLDS.items():
+        vals = [r["mttr_mins"] for r in inc if r["severity"] == sev]
+        by_sev[sev] = {"mean": _mean(vals), "median": _median(vals), "count": len(vals),
+                       "threshold_mins": thr,
+                       "status": "no_data" if not vals else ("pass" if _mean(vals) <= thr else "breach")}
+    return {"mttr_mins": _mean([r["mttr_mins"] for r in inc]),
+            "mttr_by_severity": by_sev, "mttr_source": "measured from incident log"}
 
 
 def kpis(conn):
@@ -205,9 +276,75 @@ def kpis(conn):
     launches = rows(conn, "SELECT checks FROM launches")
     blocked += sum(1 for la in launches if not all(c["done"] for c in json.loads(la["checks"])))
     noisy = conn.execute("SELECT COUNT(*) FROM detections WHERE fp_rate >= 20 AND stage != 'Idea'").fetchone()[0]
-    return {"fidelity": fidelity, "mttr_mins": 38, "coverage": coverage, "automation_rate": automation,
-            "hours_saved": hours, "open_backlog": backlog_n, "prod_detections": prod_n,
-            "blocked_items": blocked, "noisy_detections": noisy}
+    out = {"fidelity": fidelity, "coverage": coverage, "automation_rate": automation,
+           "hours_saved": hours, "open_backlog": backlog_n, "prod_detections": prod_n,
+           "blocked_items": blocked, "noisy_detections": noisy}
+    out.update(mttr_stats(conn))
+    return out
+
+
+def _stage_score(stage):
+    if stage == "Production":
+        return 3
+    if stage in ("Testing", "Tuning", "Deployment"):
+        return 2
+    if stage in ("Idea", "Development"):
+        return 1
+    return 0
+
+
+def mitre_heatmap(conn):
+    """Derived live from detection.mitre — never a hardcoded second copy.
+    Split on ' / ', map each code to its primary tactic, keep unknown
+    codes under 'Unknown' rather than dropping them."""
+    dets = rows(conn, "SELECT * FROM detections")
+    by_code = {}
+    for d in dets:
+        for code in [c.strip() for c in (d.get("mitre") or "").split(" / ") if c.strip()]:
+            by_code.setdefault(code, []).append(d)
+    tech_by_tactic = {t: [] for t in TACTICS}
+    tech_by_tactic["Unknown"] = []
+    for code in sorted(by_code):
+        ds = by_code[code]
+        name, primary, related = TECHNIQUE_MAP.get(code, (code, "Unknown", []))
+        best = max(ds, key=lambda r: _stage_score(r["stage"]))
+        entry = {"id": code, "name": name, "primary_tactic": primary,
+                 "related_tactics": related,
+                 "coverage_score": _stage_score(best["stage"]),
+                 "stage": best["stage"], "fidelity": best["fidelity"], "fp_rate": best["fp_rate"],
+                 "detections": [r["name"] for r in ds],
+                 "detection_details": [{"name": r["name"], "stage": r["stage"],
+                                        "fidelity": r["fidelity"], "fp_rate": r["fp_rate"],
+                                        "coverage_score": _stage_score(r["stage"])} for r in ds]}
+        tech_by_tactic[primary].append(entry)
+    tactics = []
+    for tactic in TACTICS + ["Unknown"]:
+        techs = sorted(tech_by_tactic[tactic], key=lambda t: t["id"])
+        if not techs:
+            status = "gap"
+        elif any(t["coverage_score"] == 3 for t in techs):
+            status = "covered"
+        else:
+            status = "partial"
+        tactics.append({"tactic": tactic, "techniques": techs,
+                        "technique_count": len(techs),
+                        "max_coverage_score": max([t["coverage_score"] for t in techs], default=0),
+                        "tactic_status": status})
+    # Drop the Unknown tactic row if empty, keep it if it has techniques.
+    tactics = [t for t in tactics if t["tactic"] != "Unknown" or t["technique_count"] > 0]
+    gaps = [t["tactic"] for t in tactics if t["tactic_status"] == "gap"]
+    covered = sum(1 for t in tactics if t["tactic_status"] == "covered")
+    partial = sum(1 for t in tactics if t["tactic_status"] == "partial")
+    # Prioritise gaps first, then partials by lowest max score, then name.
+    lowest = sorted([t for t in tactics if t["tactic_status"] != "covered"],
+                    key=lambda t: (0 if t["tactic_status"] == "gap" else 1, t["max_coverage_score"], t["tactic"]))
+    return {"unique_techniques": len(by_code),
+            "techniques_covered": sorted(by_code),
+            "tactics": tactics,
+            "tactics_covered": covered, "tactics_partial": partial, "tactics_gap": len(gaps),
+            "gaps": gaps,
+            "lowest_coverage_tactics": [t["tactic"] for t in lowest],
+            "note": "Derived from live detections; technique coverage_score: 0=no detection, 1=Idea/Development, 2=Testing/Tuning/Deployment, 3=Production."}
 
 
 def make_brief(conn):
@@ -308,7 +445,7 @@ def ask_answer(conn, question):
         risks.append(f"High false-positive rate on “{noisiest['name']}” risks analyst fatigue and missed true positives.")
     k = kpis(conn)
     summary = (f"Grounded in the live workspace (fidelity {k['fidelity']}%, coverage {k['coverage']}%, "
-               f"MTTR {k['mttr_mins']}m, {k['open_backlog']} open backlog items): "
+               f"MTTR {k['mttr_mins']:g}m, {k['open_backlog']} open backlog items): "
                f"prioritise signal quality before breadth — fix the noisiest detection and unblock telemetry before adding new coverage.")
     return {"summary": summary, "actions": actions,
             "referenced_titles": [r["title"] for r in ranked_b[:3]] + [r["name"] for r in ranked_d[:2]],
@@ -363,9 +500,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/api/mitre":
+            conn = db()
+            out = mitre_heatmap(conn)
+            conn.close()
+            return self.send_json(200, out)
+        if parsed.path == "/api/incidents":
+            conn = db()
+            out = rows(conn, "SELECT * FROM incidents ORDER BY id")
+            conn.close()
+            return self.send_json(200, out)
         if parsed.path == "/api/dashboard":
             conn = db()
-            out = {"kpis": kpis(conn), "brief": make_brief(conn),
+            out = {"kpis": kpis(conn), "brief": make_brief(conn), "mitre_heatmap": mitre_heatmap(conn),
+                   "incidents": rows(conn, "SELECT * FROM incidents ORDER BY id"),
                    "backlog": rows(conn, "SELECT * FROM backlog ORDER BY rice DESC"),
                    "detections": rows(conn, "SELECT * FROM detections"),
                    "telemetry": rows(conn, "SELECT * FROM telemetry"),
@@ -536,6 +684,22 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, get_one("playbooks", pb["id"]))
         if len(parts) == 2 and parts[0] == "playbooks" and parts[1].isdigit() and self.command == "PATCH":
             return patch("playbooks", int(parts[1]), ["status"])
+        # ---- incidents (drives MTTR)
+        if parts == ["incidents"] and self.command == "POST":
+            if not (body.get("title") or "").strip():
+                return self.send_json(400, {"error": "missing title"})
+            if body.get("severity") not in MTTR_THRESHOLDS:
+                return self.send_json(400, {"error": "severity must be Critical|High|Medium|Low"})
+            try:
+                mins = float(body.get("mttr_mins"))
+            except (TypeError, ValueError):
+                return self.send_json(400, {"error": "mttr_mins must be a number > 0"})
+            if mins <= 0:
+                return self.send_json(400, {"error": "mttr_mins must be > 0"})
+            cur = conn.execute("INSERT INTO incidents (title, severity, mttr_mins, created_at) VALUES (?,?,?,?)",
+                               (body["title"].strip(), body["severity"], mins, date.today().isoformat()))
+            conn.commit()
+            return self.send_json(201, get_one("incidents", cur.lastrowid))
         # ---- roadmap / decisions / launches
         if parts == ["roadmap"] and self.command == "POST":
             if not body.get("title"):
