@@ -10,11 +10,11 @@ All data is **simulated for demonstration**. Seeded rows are derived from
 the Senior PM, SecOps job scope, not live employer data. No employer
 branding is used.
 
-## Run it (no install, no API keys)
+## Run it (no install, no API keys, SQLite by default)
 
 Requirements: Python 3 only — standard library only
 (`http.server`, `sqlite3`, `json`, `urllib`). No npm, no pip packages,
-no external services.
+no external services, unless you choose Postgres below.
 
 ```bash
 cd omnibrain
@@ -30,6 +30,19 @@ Then open http://localhost:8765
 Data is saved locally to `omnibrain.db` (SQLite, git-ignored). Edits in
 the UI persist across restarts. The SOC demo in the parent repo is
 different: it saves nothing.
+
+## Stateful hosting: Neon Postgres (optional, Render)
+
+Local SQLite is fine locally, but on Render Free the filesystem is
+ephemeral and SQLite edits are lost on spin-down/redeploy. For a
+Render deploy, set `DATABASE_URL` to a Neon pooled connection string
+and the app uses Neon Postgres instead — same handlers, same seed,
+data survives spin-down. See `NEON.md` for the exact dashboard steps
+and the spin-down proof test. Locally, `DATABASE_URL` unset still
+means SQLite and no install; with a postgres `DATABASE_URL` set, the
+only extra install is `pip install -r requirements.txt`
+(`psycopg[binary]`, imported lazily, never required for SQLite).
+Never commit a real connection string; `.env` is git-ignored.
 
 ## What is inside
 
@@ -140,13 +153,17 @@ you control and wire it into `ask_answer` — the offline, rule-based
 path remains the default and the app runs fully without it. No key
 is read from the app by default.
 
-## Render prep (review, not deployed)
+## Render prep (review, not deployed; Neon now the stateful option)
 
 See `RENDER.md` and the repo-root `render.yaml`. Locally the server
 binds `127.0.0.1` by default; Render needs `HOST=0.0.0.0`
 (`HOST=0.0.0.0 python3 server.py`, Render injects `PORT`).
 Free tier works for a demo URL but its filesystem is ephemeral, so
 SQLite edits are lost on spin-down/redeploy and the app reseeds.
+With `DATABASE_URL` set to Neon (see `NEON.md`), edits survive
+spin-down/redeploy; only the first-visit wake delay after ~15
+minutes idle remains. Without `DATABASE_URL`, Render Free still
+reseeds — that is the old behaviour, not a bug.
 A Render URL is public by default and this app has no login —
 local-only is the private mode, not the private GitHub repo.
 `OPENAI_API_KEY` is an optional, unset-by-default placeholder in
