@@ -1,4 +1,9 @@
-# Only needed when DATABASE_URL points at Postgres (Neon / Render).
+# Only needed on remote paths; both are imported lazily in server.py,
+# so local SQLite runs need nothing installed.
+# Turso remote (chosen route): libsql.connect(database="libsql://...", auth_token=...)
+# Direct remote mode only — no embedded replica (no sync_url).
+libsql
+# Postgres fallback (any postgres:// DATABASE_URL; not the chosen route).
 # Local SQLite runs need nothing installed: psycopg is imported lazily
 # in server.py, only on the Postgres path.
 psycopg[binary]
