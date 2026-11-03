@@ -2,8 +2,9 @@
 # Apply in the Render dashboard: New+ > Blueprint, connect dudedumebi-gif/secops-demo.
 # See omnibrain/RENDER.md for the honest Free-tier caveats before you deploy.
 services:
-  # OmniBrain — Python web service. SQLite locally, Neon Postgres on
-  # Render when DATABASE_URL is set (see omnibrain/NEON.md).
+  # OmniBrain — Python web service. Turso remote when TURSO_* are set
+  # (chosen route, see omnibrain/TURSO.md), Postgres when DATABASE_URL
+  # is a postgres:// URL, local SQLite otherwise.
   - type: web
     name: omnibrain
     runtime: python
@@ -15,9 +16,17 @@ services:
       - key: HOST
         value: 0.0.0.0
       # Render injects PORT automatically; do not hardcode it here.
-      # Stateful option: set this in the Render dashboard to the Neon
-      # pooled connection string. Placeholder only — never a real value
-      # in this file, and never commit a real connection string.
+      # Stateful option (chosen): Turso remote. Set both in the Render
+      # dashboard; Turso WINS over Postgres if both are set. Placeholder
+      # only — never a real value in this file, and never commit a real
+      # URL or token. See omnibrain/TURSO.md.
+      - key: TURSO_DATABASE_URL
+        sync: false
+      - key: TURSO_AUTH_TOKEN
+        sync: false
+      # Postgres fallback (optional, empty by default). Turso wins if
+      # both are set, so leave this empty on Render unless you are
+      # deliberately switching to a postgres:// provider.
       - key: DATABASE_URL
         sync: false
       # Optional, never required, never commit a real value:
