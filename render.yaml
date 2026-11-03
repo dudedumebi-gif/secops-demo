@@ -1,0 +1,24 @@
+# Render Blueprint — review only, not yet deployed.
+# Apply in the Render dashboard: New+ > Blueprint, connect dudedumebi-gif/secops-demo.
+# See omnibrain/RENDER.md for the honest Free-tier caveats before you deploy.
+services:
+  # OmniBrain — Python stdlib web service, no build step.
+  - type: web
+    name: omnibrain
+    runtime: python
+    rootDir: omnibrain
+    buildCommand: "echo 'no build step — stdlib only'"
+    startCommand: "python3 server.py"
+    plan: free
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      # Render injects PORT automatically; do not hardcode it here.
+      # Optional, never required, never commit a real value:
+      - key: OPENAI_API_KEY
+        sync: false
+  # SOC demo — static site, no build step, saves nothing.
+  - type: static
+    name: soc-demo
+    buildCommand: "echo 'static — no build step'"
+    staticPublishPath: soc-demo
