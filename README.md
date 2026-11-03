@@ -46,7 +46,7 @@ cd soc-demo
 python3 -m http.server
 ```
 
-**OmniBrain — server app, saves to local SQLite (Neon Postgres on Render):**
+**OmniBrain — server app, saves to local SQLite (Turso remote on Render):**
 
 ```bash
 cd omnibrain
@@ -64,17 +64,19 @@ rule-based by default; a real LLM endpoint is optional, never required.
 ## Render (review, not deployed)
 
 See `render.yaml` at the repo root and `omnibrain/RENDER.md` +
-`omnibrain/NEON.md`.
+`omnibrain/TURSO.md` (Postgres fallback: `omnibrain/NEON.md`).
 Render Free works for a demo URL for both parts (OmniBrain web
-service + soc-demo static site). With `DATABASE_URL` set to a Neon
-Postgres project, OmniBrain edits survive spin-down/redeploy; only
-the first-visit wake delay after ~15 minutes idle remains. Without
-`DATABASE_URL`, Free SQLite is ephemeral and the app reseeds. A
-Render URL is public by default with no login in this app —
-local-only remains the private mode, even though the GitHub repo
-is private. Paid Starter + persistent disk is the paid alternative;
-live Neon verification is still pending the user's own Neon project
-(see `NEON.md`).
+service + soc-demo static site). With Turso set
+(`TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN`), OmniBrain edits
+survive spin-down/redeploy; only the first-visit wake delay after
+~15 minutes idle remains. Without Turso, Free SQLite is ephemeral
+and the app reseeds. A Render URL is public by default with no
+login in this app — local-only remains the private mode, even
+though the GitHub repo is private. Paid Starter + persistent disk
+is the paid alternative; live Turso verification is still pending
+the user's own Turso database + token (see `TURSO.md`). Neon was
+ruled out (user's free projects used up) and is no longer the
+chosen route, though its Postgres adapter remains as a fallback.
 
 ## External threat context (free public feeds)
 
