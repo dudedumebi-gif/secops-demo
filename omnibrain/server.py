@@ -6,19 +6,34 @@ Run from omnibrain/:
     python3 server.py --reset    # delete the local SQLite DB and reseed
     PORT=9000 python3 server.py  # override the port
     HOST=0.0.0.0 python3 server.py  # Render / LAN bind (default 127.0.0.1 locally)
-    DATABASE_URL=postgresql://... python3 server.py  # Neon Postgres instead
+    DATABASE_URL=postgresql://... python3 server.py  # Postgres instead
+    TURSO_DATABASE_URL=libsql://... TURSO_AUTH_TOKEN=... python3 server.py  # Turso
 
-Database choice, decided at startup and nowhere else:
-  * DATABASE_URL starting with postgres:// or postgresql:// -> Postgres
-    (Neon), via psycopg[binary] from requirements.txt, imported lazily
-    only on this path. See NEON.md for the user's dashboard steps.
-  * Anything else (including DATABASE_URL unset) -> local SQLite file
-    omnibrain.db, exactly as before, with no extra dependency installed.
+Database choice, decided at startup and nowhere else, in this order:
+  1. TURSO_DATABASE_URL set (libsql:// form from `turso db show --url`)
+     AND TURSO_AUTH_TOKEN set -> Turso remote, direct mode only
+     (libsql.connect(database=..., auth_token=...)). No embedded replica:
+     a local file on Render is ephemeral and would confuse the state story.
+     Turso WINS over Postgres if both are set. If TURSO_DATABASE_URL is
+     set but TURSO_AUTH_TOKEN is missing, startup fails fast — it must
+     never silently fall back to SQLite on Render, or data would reseed.
+     See TURSO.md for the user's dashboard steps.
+  2. DATABASE_URL starting with postgres:// or postgresql:// -> Postgres,
+     via psycopg[binary] from requirements.txt, imported lazily only on
+     this path. Kept as a fallback for any postgres:// provider; it is
+     not the chosen route (Neon was ruled out). See NEON.md.
+  3. Anything else (including both unset) -> local SQLite file
+     omnibrain.db, exactly as before, with no extra dependency installed.
+
+Both libsql and psycopg are imported lazily, only on their own path,
+so a local SQLite run needs nothing installed. requirements.txt lists
+both because Render installs it for all paths.
 
 The AI assistant (Ask / Triage / Draft) is rule-based and runs offline
 over the live workspace. All data is simulated for demonstration.
 Set OMNIBRAIN_LLM_URL only if you later want to point Ask at a real
 LLM endpoint — it is never required, and the offline path is the default.
+Never print TURSO_DATABASE_URL or TURSO_AUTH_TOKEN: the token is a secret.
 Never print DATABASE_URL: it contains a password.
 """
 import json
@@ -35,10 +50,15 @@ PUBLIC = os.path.join(BASE, "public")
 DB_PATH = os.path.join(BASE, "omnibrain.db")
 PORT = int(os.environ.get("PORT", "8765"))
 HOST = os.environ.get("HOST", "127.0.0.1")
-# Postgres is used only when DATABASE_URL is a postgres URL. Any other
-# value (including unset) keeps the local SQLite behaviour unchanged.
+# Engine priority (see docstring): Turso > Postgres > local SQLite.
+# TURSO_DATABASE_URL must be the libsql:// URL from `turso db show --url`.
+TURSO_DATABASE_URL = os.environ.get("TURSO_DATABASE_URL", "").strip()
+TURSO_AUTH_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "")
+USE_TURSO = bool(TURSO_DATABASE_URL)
+# Postgres is used only when DATABASE_URL is a postgres URL and Turso is
+# not set. Any other value (including unset) keeps local SQLite behaviour.
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-USE_POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
+USE_POSTGRES = (not USE_TURSO) and DATABASE_URL.startswith(("postgres://", "postgresql://"))
 
 
 # ---------------------------------------------------------------- DB adapter
@@ -107,11 +127,21 @@ class _Cursor:
 
 
 class _Connection:
-    """Connection wrapper: same .execute/.executescript/.commit/.close."""
+    """Connection wrapper: same .execute/.executescript/.commit/.close.
 
-    def __init__(self, raw, is_pg=False):
+    Modes: is_pg (Postgres translation) or is_turso (SQLite dialect passed
+    through unchanged — libSQL speaks SQLite, so no ?->%s or SERIAL
+    translation applies; its cursor natively exposes lastrowid and a
+    DB-API description, verified against libsql 0.1.11). Plain SQLite
+    is neither flag. For Turso, executescript is implemented as
+    split-on-';' rather than relying on the remote executescript path:
+    SCHEMA contains no ';' inside string literals, so the split is safe.
+    """
+
+    def __init__(self, raw, is_pg=False, is_turso=False):
         self._raw = raw
         self._is_pg = is_pg
+        self._is_turso = is_turso
 
     def execute(self, sql, args=()):
         if self._is_pg:
@@ -125,6 +155,11 @@ class _Connection:
     def executescript(self, sql):
         if self._is_pg:
             for stmt in _pg_schema(sql).split(";"):
+                if stmt.strip():
+                    self._raw.execute(stmt)
+            return None
+        if self._is_turso:
+            for stmt in sql.split(";"):
                 if stmt.strip():
                     self._raw.execute(stmt)
             return None
@@ -311,12 +346,27 @@ def rice(reach, impact, confidence, effort):
 
 
 def db():
+    if USE_TURSO:
+        # Fail fast, never silently fall back to SQLite: a missing token
+        # on Render would otherwise reseed data instead of using Turso.
+        if not TURSO_AUTH_TOKEN:
+            raise RuntimeError(
+                "TURSO_DATABASE_URL is set but TURSO_AUTH_TOKEN is missing. "
+                "Set TURSO_AUTH_TOKEN in the Render dashboard (see TURSO.md) "
+                "or unset TURSO_DATABASE_URL to use local SQLite.")
+        # Lazy import: SQLite/Postgres runs must never require libsql.
+        # Remote direct mode only — no sync_url / embedded replica.
+        import libsql
+
+        return _Connection(
+            libsql.connect(database=TURSO_DATABASE_URL, auth_token=TURSO_AUTH_TOKEN),
+            is_turso=True)
     if USE_POSTGRES:
         # Lazy import: a SQLite run must never require psycopg installed.
         import psycopg
 
-        # The pooled Neon string already carries sslmode=require; pass it
-        # through untouched and never log it.
+        # The pooled Postgres string already carries sslmode=require; pass
+        # it through untouched and never log it.
         return _Connection(psycopg.connect(DATABASE_URL), is_pg=True)
     return _Connection(sqlite3.connect(DB_PATH))
 
@@ -1123,18 +1173,30 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    # Fail fast before serving if Turso is half-configured.
+    if USE_TURSO and not TURSO_AUTH_TOKEN:
+        print("ERROR: TURSO_DATABASE_URL is set but TURSO_AUTH_TOKEN is missing.", file=sys.stderr)
+        print("Set TURSO_AUTH_TOKEN in the Render dashboard (see TURSO.md),", file=sys.stderr)
+        print("or unset TURSO_DATABASE_URL to use local SQLite.", file=sys.stderr)
+        sys.exit(2)
     if "--reset" in sys.argv:
-        if USE_POSTGRES:
-            # Never drop a shared Postgres database from a CLI flag; seed
-            # only fills empty tables, so existing Neon data is preserved.
-            print("reset ignored for Postgres: existing data is kept, empty tables are seeded")
+        if USE_TURSO or USE_POSTGRES:
+            # Never drop a shared remote database from a CLI flag; seed
+            # only fills empty tables, so existing Turso/Postgres data
+            # is preserved.
+            print("reset ignored for remote database: existing data is kept, empty tables are seeded")
         elif os.path.exists(DB_PATH):
             os.remove(DB_PATH)
             print("reset: database removed, will reseed on start")
     init_db()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"OmniBrain running at http://{HOST}:{PORT}  (Ctrl+C to stop)")
-    print(f"Database: {'Neon Postgres (DATABASE_URL set)' if USE_POSTGRES else DB_PATH}")
+    if USE_TURSO:
+        print("Database: Turso remote (URL and token not shown)")
+    elif USE_POSTGRES:
+        print("Database: Postgres (DATABASE_URL set)")
+    else:
+        print(f"Database: {DB_PATH}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
