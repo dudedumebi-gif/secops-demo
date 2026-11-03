@@ -33,7 +33,10 @@ services:
       - key: OPENAI_API_KEY
         sync: false
   # SOC demo — static site, no build step, saves nothing.
-  - type: static
+  # Render Blueprint has no "static" service type: a static site is
+  # type: web with runtime: static (that was the "unknown type" error).
+  - type: web
     name: soc-demo
+    runtime: static
     buildCommand: "echo 'static — no build step'"
     staticPublishPath: soc-demo
