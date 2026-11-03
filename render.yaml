@@ -2,18 +2,24 @@
 # Apply in the Render dashboard: New+ > Blueprint, connect dudedumebi-gif/secops-demo.
 # See omnibrain/RENDER.md for the honest Free-tier caveats before you deploy.
 services:
-  # OmniBrain — Python stdlib web service, no build step.
+  # OmniBrain — Python web service. SQLite locally, Neon Postgres on
+  # Render when DATABASE_URL is set (see omnibrain/NEON.md).
   - type: web
     name: omnibrain
     runtime: python
     rootDir: omnibrain
-    buildCommand: "echo 'no build step — stdlib only'"
+    buildCommand: "pip install -r requirements.txt"
     startCommand: "python3 server.py"
     plan: free
     envVars:
       - key: HOST
         value: 0.0.0.0
       # Render injects PORT automatically; do not hardcode it here.
+      # Stateful option: set this in the Render dashboard to the Neon
+      # pooled connection string. Placeholder only — never a real value
+      # in this file, and never commit a real connection string.
+      - key: DATABASE_URL
+        sync: false
       # Optional, never required, never commit a real value:
       - key: OPENAI_API_KEY
         sync: false
