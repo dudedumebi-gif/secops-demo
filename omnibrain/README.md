@@ -139,3 +139,77 @@ If you later want a real LLM, set `OMNIBRAIN_LLM_URL` to an endpoint
 you control and wire it into `ask_answer` — the offline, rule-based
 path remains the default and the app runs fully without it. No key
 is read from the app by default.
+
+## Render prep (review, not deployed)
+
+See `RENDER.md` and the repo-root `render.yaml`. Locally the server
+binds `127.0.0.1` by default; Render needs `HOST=0.0.0.0`
+(`HOST=0.0.0.0 python3 server.py`, Render injects `PORT`).
+Free tier works for a demo URL but its filesystem is ephemeral, so
+SQLite edits are lost on spin-down/redeploy and the app reseeds.
+A Render URL is public by default and this app has no login —
+local-only is the private mode, not the private GitHub repo.
+`OPENAI_API_KEY` is an optional, unset-by-default placeholder in
+`render.yaml` (`sync: false`); never commit a real key.
+
+## Rule-based reasoning — Steps 1–3 (explicit in ask/triage/draft)
+
+Every ask, triage, and draft response now includes:
+
+- **Step 1 MITRE:** technique + tactic identified from keywords,
+  with confidence and evidence keywords. If no technique matches,
+  it says "no MITRE technique matched — human review required"
+  rather than inventing one. Techniques recognised include the
+  original eight (T1078, T1550, T1059.001, T1003.001, T1110,
+  T1071.004, T1098, T1486) plus gap-tactic ones (T1190, T1133,
+  T1566, T1548, T1068, T1083, T1087, T1021, T1005, T1048, T1595,
+  T1583, T1588).
+- **Step 2 NIST CSF 2.0:** one primary function — Govern, Identify,
+  Protect, Detect, Respond, or Recover — with category and
+  rationale (e.g. detection -> Detect / Continuous Monitoring,
+  containment -> Respond / Incident Mitigation, approval gate ->
+  Govern / Roles, asset inventory -> Identify / Asset Management,
+  MFA/allowlist -> Protect / Identity Management, rollback/lessons
+  -> Recover / Incident Recovery).
+- **Step 3 Decision:** RICE, owner team, approval_required
+  (High/Critical actions = yes), launch-gate checklist, and
+  success criteria.
+
+## Free public threat-intel enrichment (external context only)
+
+`GET /api/threat-intel` returns cached data; `POST
+/api/threat-intel/refresh` attempts a live fetch (10s timeout,
+per-source ok/failed, never fails the dashboard if offline).
+Sources, in order, capped at 5 items each: CISA KEV
+(free, no auth, most recent by dateAdded) and NVD CVE (free,
+no key, rate-limited, best-effort, filtered to the last 7 days
+so the list is recent, not oldest-first). abuse.ch URLhaus is
+documented as unavailable, not attempted: verified Nov 2026,
+its public no-key downloads return 410 Gone and are now
+key-gated, and this app takes no keys. MITRE enrichment is the local
+technique/tactic mapping — the full STIX bundle is NOT downloaded
+at runtime (too large); its source is
+https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
+for a future offline snapshot. All enrichment is labelled
+"public external threat context, not internal telemetry" in the
+UI and API. No internal data is sent to these feeds (they are
+read-only GETs).
+
+## MITRE gap mitigations
+
+`GET /api/mitre` now includes `mitigations[]` for all 8
+primary-tactic gaps, plus a note that some gaps are
+primary-tactic only (T1078 also covers Initial Access and T1550
+also covers Lateral Movement as secondary tactics, so those
+tactics are not wholly blind). Each mitigation has tactic,
+recommended detection, technique, log source needed, NIST
+function, effort, priority, and suggested backlog title.
+Priority order: P0 Initial Access, Privilege Escalation,
+Lateral Movement (attacker progression); then P1 Exfiltration,
+Collection (data loss); then P1 Discovery, P2 Reconnaissance
+(early warning); then P2 Resource Development (threat-intel
+monitoring, lowest direct detection value).
+Use `POST /api/mitre/mitigations/{tactic}/create-backlog`
+(e.g. `Initial%20Access`) to turn a mitigation into a backlog
+item (auto-RICE, status intake), or the "Add to backlog" button
+on each mitigation card in the MITRE tab.
