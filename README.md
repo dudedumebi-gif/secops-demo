@@ -60,3 +60,36 @@ Honest difference: the SOC demo saves nothing — reload and it resets.
 OmniBrain saves your edits to `omnibrain/omnibrain.db` (git-ignored)
 and they persist across restarts. Its assistant is offline and
 rule-based by default; a real LLM endpoint is optional, never required.
+
+## Render (review, not deployed)
+
+See `render.yaml` at the repo root and `omnibrain/RENDER.md`.
+Render Free works for a demo URL for both parts (OmniBrain web
+service + soc-demo static site), but Free SQLite is ephemeral:
+OmniBrain edits are lost on spin-down/redeploy and the app
+reseeds. A Render URL is public by default with no login in this
+app — local-only remains the private mode, even though the GitHub
+repo is private. Paid Starter + persistent disk, or a Postgres
+migration, is what would make the database durable; neither is
+in this change.
+
+## External threat context (free public feeds)
+
+OmniBrain can refresh public external threat context only —
+CISA KEV and NVD CVE (last 7 days) — via
+`POST /api/threat-intel/refresh`, shown on Mission Control with
+source and fetch time. abuse.ch URLhaus is documented as
+unavailable: its public no-key downloads are key-gated as of
+Nov 2026, so it is not attempted. It never sends internal data to those
+feeds, and the dashboard still loads offline from cache or empty.
+MITRE enrichment stays local (technique/tactic mapping); the
+full STIX bundle is not downloaded at runtime.
+
+## MITRE gap mitigations
+
+The MITRE tab now lists a mitigation card for each of the 8
+primary-tactic gaps, in P0-first order (Initial Access,
+Privilege Escalation, Lateral Movement, then Exfiltration and
+Collection, then Discovery and Reconnaissance, then Resource
+Development), each with detection, log source, NIST function,
+effort, priority, and an "Add to backlog" button.
