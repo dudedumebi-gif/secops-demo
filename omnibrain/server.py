@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
-"""OmniBrain — SecOps product-management app. Python 3 standard library only.
+"""OmniBrain — SecOps product-management app.
 
 Run from omnibrain/:
-    python3 server.py            # http://localhost:8765
+    python3 server.py            # http://localhost:8765 (local SQLite)
     python3 server.py --reset    # delete the local SQLite DB and reseed
     PORT=9000 python3 server.py  # override the port
     HOST=0.0.0.0 python3 server.py  # Render / LAN bind (default 127.0.0.1 locally)
+    DATABASE_URL=postgresql://... python3 server.py  # Neon Postgres instead
 
-No install step, no API keys, no external services. The AI assistant
-(Ask / Triage / Draft) is rule-based and runs offline over the live
-workspace in omnibrain.db. All data is simulated for demonstration.
+Database choice, decided at startup and nowhere else:
+  * DATABASE_URL starting with postgres:// or postgresql:// -> Postgres
+    (Neon), via psycopg[binary] from requirements.txt, imported lazily
+    only on this path. See NEON.md for the user's dashboard steps.
+  * Anything else (including DATABASE_URL unset) -> local SQLite file
+    omnibrain.db, exactly as before, with no extra dependency installed.
+
+The AI assistant (Ask / Triage / Draft) is rule-based and runs offline
+over the live workspace. All data is simulated for demonstration.
 Set OMNIBRAIN_LLM_URL only if you later want to point Ask at a real
 LLM endpoint — it is never required, and the offline path is the default.
+Never print DATABASE_URL: it contains a password.
 """
 import json
 import os
@@ -27,6 +35,106 @@ PUBLIC = os.path.join(BASE, "public")
 DB_PATH = os.path.join(BASE, "omnibrain.db")
 PORT = int(os.environ.get("PORT", "8765"))
 HOST = os.environ.get("HOST", "127.0.0.1")
+# Postgres is used only when DATABASE_URL is a postgres URL. Any other
+# value (including unset) keeps the local SQLite behaviour unchanged.
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+USE_POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
+
+
+# ---------------------------------------------------------------- DB adapter
+# Handlers below are written once, in SQLite dialect: "?" placeholders,
+# INTEGER PRIMARY KEY AUTOINCREMENT, cursor.lastrowid, fetchone()[0] for
+# COUNT(*). The wrapper translates that dialect for Postgres so no
+# handler needs a second copy. Audit (2026-11-03): the app has no
+# INSERT OR / REPLACE INTO / PRAGMA / LIKE-with-"?" SQL, no "?" inside
+# SQL string literals, and no "%" inside SQL strings, so the scanner
+# below (which skips single-quoted literals anyway) covers every query.
+def _pg_sql(sql):
+    """Translate one SQLite-dialect statement to Postgres dialect."""
+    out, in_quote, i = [], False, 0
+    while i < len(sql):
+        ch = sql[i]
+        if ch == "'":
+            if in_quote and i + 1 < len(sql) and sql[i + 1] == "'":
+                out.append("''")
+                i += 2
+                continue
+            in_quote = not in_quote
+            out.append(ch)
+        elif ch == "?" and not in_quote:
+            out.append("%s")
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _pg_schema(sql):
+    return sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+
+
+class _Cursor:
+    """Cursor wrapper: tuple rows on both engines, .lastrowid on both."""
+
+    def __init__(self, raw, is_pg=False, returning=False):
+        self._raw = raw
+        self._is_pg = is_pg
+        self._returning = returning
+        self._lastrowid = None
+        self._lastrowid_fetched = False
+
+    @property
+    def description(self):
+        return self._raw.description
+
+    def fetchone(self):
+        return self._raw.fetchone()
+
+    def fetchall(self):
+        return self._raw.fetchall()
+
+    @property
+    def lastrowid(self):
+        if not self._is_pg:
+            return self._raw.lastrowid
+        if not self._returning:
+            return None
+        if not self._lastrowid_fetched:
+            row = self._raw.fetchone()
+            self._lastrowid = row[0] if row else None
+            self._lastrowid_fetched = True
+        return self._lastrowid
+
+
+class _Connection:
+    """Connection wrapper: same .execute/.executescript/.commit/.close."""
+
+    def __init__(self, raw, is_pg=False):
+        self._raw = raw
+        self._is_pg = is_pg
+
+    def execute(self, sql, args=()):
+        if self._is_pg:
+            sql = _pg_sql(sql)
+            returning = sql.strip().upper().startswith("INSERT ") and "RETURNING" not in sql.upper()
+            if returning:
+                sql = sql + " RETURNING id"
+            return _Cursor(self._raw.execute(sql, args), is_pg=True, returning=returning)
+        return _Cursor(self._raw.execute(sql, args))
+
+    def executescript(self, sql):
+        if self._is_pg:
+            for stmt in _pg_schema(sql).split(";"):
+                if stmt.strip():
+                    self._raw.execute(stmt)
+            return None
+        return self._raw.executescript(sql)
+
+    def commit(self):
+        return self._raw.commit()
+
+    def close(self):
+        return self._raw.close()
 
 # ---------------------------------------------------------------- MTTR thresholds
 # Industry benchmarks, NOT a single official NIST/ISO MTTR standard.
@@ -203,9 +311,14 @@ def rice(reach, impact, confidence, effort):
 
 
 def db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    if USE_POSTGRES:
+        # Lazy import: a SQLite run must never require psycopg installed.
+        import psycopg
+
+        # The pooled Neon string already carries sslmode=require; pass it
+        # through untouched and never log it.
+        return _Connection(psycopg.connect(DATABASE_URL), is_pg=True)
+    return _Connection(sqlite3.connect(DB_PATH))
 
 
 def init_db():
@@ -244,7 +357,11 @@ def init_db():
 
 
 def rows(conn, sql, args=()):
-    return [dict(r) for r in conn.execute(sql, args).fetchall()]
+    # Description-based dicts work on both engines (tuple rows). Do not
+    # use dict(r) here: Postgres cursors return tuples, not sqlite Rows.
+    cur = conn.execute(sql, args)
+    cols = [d[0] for d in cur.description] if cur.description else []
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
 def _mean(vals):
@@ -1007,13 +1124,17 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     if "--reset" in sys.argv:
-        if os.path.exists(DB_PATH):
+        if USE_POSTGRES:
+            # Never drop a shared Postgres database from a CLI flag; seed
+            # only fills empty tables, so existing Neon data is preserved.
+            print("reset ignored for Postgres: existing data is kept, empty tables are seeded")
+        elif os.path.exists(DB_PATH):
             os.remove(DB_PATH)
-        print("reset: database removed, will reseed on start")
+            print("reset: database removed, will reseed on start")
     init_db()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"OmniBrain running at http://{HOST}:{PORT}  (Ctrl+C to stop)")
-    print(f"Database: {DB_PATH}")
+    print(f"Database: {'Neon Postgres (DATABASE_URL set)' if USE_POSTGRES else DB_PATH}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
