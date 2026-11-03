@@ -22,11 +22,41 @@ A lightweight, Splunk-style interactive SOC console (static HTML, open `soc-demo
 
 Try first: open the critical ransomware incident, then run its SOAR playbook — it pauses at the approval gate, and after approval it completes and the incident moves to Contained.
 
-### omnibrain/ — SecOps product-management workspace
-Documentation and a seeded-workspace snapshot for OmniBrain AI Agent (SPM-Dums), the private app that does the Senior PM, SecOps product work behind the console: intake and RICE-ranked backlog, detection lifecycle, telemetry onboarding, SOAR governance with approval gates, roadmap and launch readiness, metrics and operating cadence, and an AI assistant grounded in the live workspace.
+### omnibrain/ — SecOps product-management app (runnable)
+OmniBrain AI Agent (SPM-Dums), the app that does the Senior PM, SecOps
+product work behind the console: intake and RICE-ranked backlog,
+detection lifecycle, telemetry onboarding, SOAR governance with approval
+gates, roadmap and launch readiness, metrics and operating cadence, and
+an assistant grounded in the live workspace. This is runnable code in
+this repo, not just documentation — see `omnibrain/README.md` and
+`omnibrain/workspace-summary.md` for the seed snapshot it starts with.
 
-The live OmniBrain app itself is a private, server-backed app and cannot be exported as a static site, so this folder contains its documented scope, actions, and seeded workspace summary — not a claim that the live app code is in this repo. See `omnibrain/README.md`.
+## How to run BOTH
 
-## How to use this repo
-- `soc-demo/index.html` runs standalone in a browser. No build step, no server, no data is saved.
-- `omnibrain/` is reference material for the product-management workflow the console supports.
+No install step and no API keys are required for either demo.
+Python 3 is the only requirement, and only for serving OmniBrain.
+
+**SOC demo — static, saves nothing:**
+
+```bash
+# Option A: just open the file in a browser
+# soc-demo/index.html
+# Option B: serve it locally
+cd soc-demo
+python3 -m http.server
+```
+
+**OmniBrain — server app, saves to local SQLite:**
+
+```bash
+cd omnibrain
+python3 server.py
+# then open http://localhost:8765
+# Port override: PORT=9000 python3 server.py
+# Reset to seed data: python3 server.py --reset
+```
+
+Honest difference: the SOC demo saves nothing — reload and it resets.
+OmniBrain saves your edits to `omnibrain/omnibrain.db` (git-ignored)
+and they persist across restarts. Its assistant is offline and
+rule-based by default; a real LLM endpoint is optional, never required.
