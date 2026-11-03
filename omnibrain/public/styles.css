@@ -15,4 +15,12 @@ button.primary{background:var(--red);color:#fff;border:0;padding:9px 14px;border
 .brief{background:#fff;border-left:4px solid var(--red);padding:14px;margin:12px 0}
 .blocked{color:#c11119;font-weight:700}.ready{color:#067647;font-weight:700}
 pre{white-space:pre-wrap;background:#fff;border:1px solid var(--line);padding:12px}
+.mitre-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.tactic{background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px}
+.tactic.gap{border-color:#9aa0aa;background:#f2f3f5}.tactic.partial{border-color:#d97706}.tactic.covered{border-color:var(--red)}
+.tactic h3{margin:0 0 4px}.tactic-status{font-size:13px;color:var(--muted);margin:0 0 8px;text-transform:capitalize}
+.tech-cell{border:1px solid var(--line);border-radius:6px;padding:8px;margin:6px 0;cursor:pointer}
+.tech-cell b{display:block}.tech-cell span{display:block;font-size:13px;color:var(--muted)}
+.tech-cell.score-3{background:#ed1c24;color:#fff;border-color:#c11119}.tech-cell.score-3 span{color:#fff}
+.tech-cell.score-2{background:#fca5a5}.tech-cell.score-1{background:#fee2e2}.tech-cell.gap{background:#e5e7eb;color:#4c5568}
 form{background:#fff;border:1px solid var(--line);padding:12px;border-radius:8px;margin:12px 0}
