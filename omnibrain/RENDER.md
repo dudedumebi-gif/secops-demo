@@ -1,8 +1,12 @@
 # Render review — can it work for OmniBrain + SOC demo?
 
 Short answer: yes for a demo URL, with one big caveat — **Free-tier
-SQLite is not durable.** Do not treat a Render URL as private just
-because the GitHub repo is private.
+SQLite is not durable, but Neon Postgres fixes that part.** Do not
+treat a Render URL as private just because the GitHub repo is
+private. See `NEON.md`: with `DATABASE_URL` set to Neon, data
+survives spin-down and redeploy; Render Free still spins down after
+~15 minutes idle, so the first visit still wakes slowly — only the
+data loss is fixed.
 
 ## What Render Free gives you (demo-appropriate)
 
@@ -21,12 +25,13 @@ because the GitHub repo is private.
   so it will still work — but your edits, backlog additions, logged
   incidents, and threat-intel cache will not survive.
 - That is acceptable for a demo, not for durable work.
-- To make SQLite durable you need a paid plan: Starter is about
-  $7/month plus a persistent disk at about $0.25/GB/month, mounted
-  for the database. The alternative is a Postgres migration, which
-  is not in this task — it would need a non-stdlib database driver
-  and a schema change, and is not free-tier durable either, because
-  free Postgres expires after 30 days.
+- The free stateful alternative is now implemented: Neon Postgres
+  via `DATABASE_URL` (see `NEON.md`). A small adapter translates
+  the app's SQLite dialect for Postgres, and `render.yaml` installs
+  `psycopg[binary]` at build time. The paid alternative remains:
+  Starter is about $7/month plus a persistent disk at about
+  $0.25/GB/month, mounted for the database. Render's own free
+  Postgres is not the answer here — it expires after 30 days.
 
 ## Public by default — private mode is local-only
 
@@ -48,15 +53,19 @@ because the GitHub repo is private.
    (rootDir `omnibrain`, startCommand `python3 server.py`,
    plan `free`, `HOST=0.0.0.0`). Render injects `PORT`
    automatically — do not hardcode it.
-4. In the service's Environment tab, add `OPENAI_API_KEY` only if
-   you later wire the LLM hook; leave it unset for the offline
-   demo. Never commit a key.
+4. In the service's Environment tab, add `DATABASE_URL` with the
+   Neon pooled connection string (see `NEON.md`, step 2) for
+   durable state, and add `OPENAI_API_KEY` only if you later wire
+   the LLM hook; leave it unset for the offline demo. Never commit
+   a key or a connection string.
 5. Deploy. The URL will be name-dependent, typically
    `https://omnibrain.onrender.com` if that name is free — Render
    will show the exact URL after deploy. The SOC demo static site
    gets its own URL from the same Blueprint.
 6. Expect the first load after idle to take about a minute
-   (spin-up), and expect a fresh seed after any redeploy on Free.
+   (spin-up). With `DATABASE_URL` set, expect your edits to survive
+   redeploy; without it, expect a fresh seed after any redeploy
+   on Free. Verify with the spin-down proof test in `NEON.md`.
 
 ## What was verified locally (not a deploy)
 
