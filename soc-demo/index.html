@@ -1,0 +1,1263 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
+    <title>SOC Demo — Security Operations Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root{
+        --bg:#f4f5f7; --bg2:#eceef1; --panel:#ffffff; --panel2:#f7f8fa;
+        --line:#dde1e8; --line2:#c9cfdb;
+        --ink:#14161c; --muted:#4c5568; --faint:#7c8698;
+        --red:#ed1c24; --red-dk:#c11119; --red-soft:rgba(237,28,36,.08);
+        --crit:#d92d20; --crit-bg:rgba(217,45,32,.10);
+        --high:#dc6803; --high-bg:rgba(220,104,3,.12);
+        --med:#b54708; --med-bg:rgba(181,71,8,.10);
+        --low:#175cd3; --low-bg:rgba(23,92,211,.10);
+        --ok:#067647; --ok-bg:rgba(6,118,71,.10);
+        --cyan:#0e7490;
+        --chip:#eef0f4;
+        --shadow:0 10px 30px rgba(16,20,30,.10);
+        --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+        --sans:"IBM Plex Sans",-apple-system,"Segoe UI",Roboto,sans-serif;
+      }
+      @media (prefers-color-scheme: dark){
+        :root{
+          --bg:#0a0b0e; --bg2:#0e1015; --panel:#13151c; --panel2:#171a22;
+          --line:#23262f; --line2:#313644;
+          --ink:#f2f3f6; --muted:#a7aebc; --faint:#767f90;
+          --red:#ed1c24; --red-dk:#ff2e35; --red-soft:rgba(237,28,36,.14);
+          --crit:#ff5a52; --crit-bg:rgba(255,90,82,.13);
+          --high:#ffa04d; --high-bg:rgba(255,160,77,.13);
+          --med:#ffd34d; --med-bg:rgba(255,211,77,.12);
+          --low:#6db3ff; --low-bg:rgba(109,179,255,.13);
+          --ok:#3ecf8e; --ok-bg:rgba(62,207,142,.12);
+          --cyan:#45c8dd;
+          --chip:#1d2029;
+          --shadow:0 14px 34px rgba(0,0,0,.5);
+        }
+      }
+      *{box-sizing:border-box}
+      html,body{margin:0;padding:0}
+      body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+      button{font-family:inherit;cursor:pointer}
+      input,select,textarea{font-family:inherit}
+      ::selection{background:var(--red);color:#fff}
+
+      /* ============ App frame ============ */
+      .app{display:grid;grid-template-columns:228px 1fr;min-height:100vh}
+      .side{background:var(--bg2);border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh}
+      .brand{padding:2px 8px 16px;border-bottom:1px solid var(--line);margin-bottom:14px}
+      .brand .mark{display:flex;align-items:center;gap:9px}
+      .brand .cube{width:26px;height:26px;background:var(--red);display:grid;place-items:center;flex:none}
+      .brand .cube svg{width:16px;height:16px}
+      .brand .name{font-weight:700;font-size:16px;letter-spacing:.14em}
+      .brand .sub{font-size:11px;color:var(--muted);margin-top:5px;letter-spacing:.04em}
+      .brand .env{display:inline-block;margin-top:9px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.12em;color:var(--red);border:1px solid var(--red);padding:2px 7px}
+      .navbtn{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;border-left:3px solid transparent;color:var(--muted);padding:9px 10px;font-size:13.5px;font-weight:500;border-radius:0}
+      .navbtn svg{width:17px;height:17px;flex:none}
+      .navbtn:hover{color:var(--ink);background:var(--chip)}
+      .navbtn.active{color:var(--ink);background:var(--chip);border-left-color:var(--red);font-weight:600}
+      .navbtn .count{margin-left:auto;font-family:var(--mono);font-size:11px;background:var(--red);color:#fff;padding:0 6px;border-radius:9px;line-height:17px;font-weight:600}
+      .navbtn .count.grey{background:var(--chip);color:var(--muted);border:1px solid var(--line2)}
+      .side .spacer{flex:1}
+      .health{border:1px solid var(--line);background:var(--panel);padding:11px 12px}
+      .health h4{margin:0 0 8px;font-size:10.5px;letter-spacing:.12em;color:var(--faint);font-weight:600}
+      .health .row{display:flex;justify-content:space-between;font-size:12px;padding:2.5px 0;color:var(--muted)}
+      .health .row b{font-family:var(--mono);font-weight:600;color:var(--ink)}
+      .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:6px;vertical-align:1px}
+      .dot.warn{background:var(--med)}
+      .main{min-width:0;display:flex;flex-direction:column}
+      .top{position:sticky;top:0;z-index:30;background:var(--bg);border-bottom:1px solid var(--line);padding:12px 22px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+      .top h1{font-size:19px;margin:0;font-weight:700;letter-spacing:-.01em}
+      .top .crumb{color:var(--faint);font-size:12.5px;font-family:var(--mono)}
+      .top .right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+      .clock{font-family:var(--mono);font-size:12.5px;color:var(--muted);border:1px solid var(--line);background:var(--panel);padding:6px 10px}
+      .clock b{color:var(--ink)}
+      .analyst{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
+      .avatar{width:28px;height:28px;border-radius:50%;background:var(--ink);color:var(--bg);display:grid;place-items:center;font-size:11px;font-weight:700}
+      .gsearch{display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:var(--panel);padding:6px 10px;min-width:210px}
+      .gsearch svg{width:14px;height:14px;color:var(--faint);flex:none}
+      .gsearch input{border:0;background:none;outline:none;color:var(--ink);font-size:13px;width:100%;font-family:var(--mono)}
+      main{padding:20px 22px 40px;max-width:1460px;width:100%;margin:0 auto}
+      .view{display:none}
+      .view.active{display:block}
+
+      /* ============ Generic components ============ */
+      .card{background:var(--panel);border:1px solid var(--line);padding:16px 18px}
+      .card h3{margin:0;font-size:14px;font-weight:600}
+      .card .sub{color:var(--muted);font-size:12.5px;margin-top:2px}
+      .cardhead{display:flex;align-items:flex-start;gap:10px;margin-bottom:12px}
+      .cardhead .sp{margin-left:auto}
+      .grid{display:grid;gap:14px}
+      .kpis{grid-template-columns:repeat(6,1fr)}
+      .kpi{background:var(--panel);border:1px solid var(--line);padding:14px 15px;position:relative}
+      .kpi::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--line2)}
+      .kpi.red::before{background:var(--red)}
+      .kpi .lab{font-size:11px;letter-spacing:.1em;color:var(--faint);font-weight:600;text-transform:uppercase}
+      .kpi .val{font-size:27px;font-weight:700;font-family:var(--mono);margin:3px 0 1px;letter-spacing:-.02em}
+      .kpi .val small{font-size:14px;color:var(--muted);font-weight:500}
+      .kpi .delta{font-size:12px;font-family:var(--mono)}
+      .up{color:var(--crit)} .down{color:var(--ok)} .flat{color:var(--faint)}
+      .good-up{color:var(--ok)} .bad-up{color:var(--crit)}
+      .cols-2{grid-template-columns:1.9fr 1fr}
+      .cols-2b{grid-template-columns:1fr 1fr}
+      .cols-3{grid-template-columns:repeat(3,1fr)}
+      .sev{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.08em;padding:2px 8px;text-transform:uppercase;white-space:nowrap}
+      .sev.crit{color:var(--crit);background:var(--crit-bg)}
+      .sev.high{color:var(--high);background:var(--high-bg)}
+      .sev.med{color:var(--med);background:var(--med-bg)}
+      .sev.low{color:var(--low);background:var(--low-bg)}
+      .sev.info{color:var(--muted);background:var(--chip)}
+      .status{font-size:11.5px;font-weight:600;padding:2px 8px;border:1px solid var(--line2);color:var(--muted);white-space:nowrap}
+      .status.new{color:var(--crit);border-color:var(--crit)}
+      .status.triage{color:var(--high);border-color:var(--high)}
+      .status.investigating{color:var(--low);border-color:var(--low)}
+      .status.contained{color:var(--ok);border-color:var(--ok)}
+      .status.closed{color:var(--faint)}
+      .btn{display:inline-flex;align-items:center;gap:7px;background:var(--red);color:#fff;border:1px solid var(--red);padding:8px 15px;font-size:13px;font-weight:600;border-radius:2px}
+      .btn:hover{background:var(--red-dk);border-color:var(--red-dk)}
+      .btn.ghost{background:transparent;color:var(--ink);border-color:var(--line2)}
+      .btn.ghost:hover{border-color:var(--ink);background:var(--chip)}
+      .btn.small{padding:5px 10px;font-size:12px}
+      .btn:disabled{opacity:.5;cursor:default}
+      .chipbtn{border:1px solid var(--line2);background:var(--panel);color:var(--muted);padding:5px 11px;font-size:12px;font-weight:500;border-radius:20px}
+      .chipbtn:hover{color:var(--ink);border-color:var(--ink)}
+      .chipbtn.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+      .mono{font-family:var(--mono)}
+      .muted{color:var(--muted)} .faint{color:var(--faint)}
+      .small{font-size:12px} .tiny{font-size:11px}
+      table{width:100%;border-collapse:collapse;font-size:13px}
+      th{text-align:left;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+      td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+      tbody tr{transition:background .12s}
+      tbody tr.clickable{cursor:pointer}
+      tbody tr.clickable:hover{background:var(--panel2)}
+      .bar{height:6px;background:var(--chip);position:relative;overflow:hidden;min-width:70px}
+      .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--red)}
+      .bar.ok i{background:var(--ok)} .bar.low i{background:var(--low)} .bar.med i{background:var(--med)}
+      .tag{display:inline-block;font-family:var(--mono);font-size:10.5px;background:var(--chip);border:1px solid var(--line);padding:1px 6px;margin:1px 2px 1px 0;color:var(--muted)}
+      .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+      .legend i{width:9px;height:9px;display:inline-block;margin-right:5px}
+      .section-intro{max-width:760px;margin-bottom:16px}
+      .section-intro h2{margin:0 0 4px;font-size:17px}
+      .section-intro p{margin:0;color:var(--muted);font-size:13.5px}
+      .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+      .toolbar .sp{flex:1}
+      select,.txtin{border:1px solid var(--line2);background:var(--panel);color:var(--ink);padding:7px 9px;font-size:13px;border-radius:2px}
+
+      /* ============ Feed / lists ============ */
+      .feed{list-style:none;margin:0;padding:0;max-height:342px;overflow:hidden}
+      .feed li{display:flex;gap:10px;padding:8px 2px;border-bottom:1px solid var(--line);font-size:12.5px;align-items:flex-start}
+      .feed li:last-child{border-bottom:0}
+      .feed .t{font-family:var(--mono);color:var(--faint);font-size:11px;white-space:nowrap;padding-top:1px}
+      .feed .msg{min-width:0}
+      .feed .msg b{font-weight:600}
+      .feed .src{color:var(--faint);font-family:var(--mono);font-size:11px}
+      .pulse{width:8px;height:8px;border-radius:50%;background:var(--ok);flex:none;margin-top:5px;animation:pl 2s infinite}
+      @keyframes pl{0%{box-shadow:0 0 0 0 var(--ok-bg)}70%{box-shadow:0 0 0 6px transparent}100%{box-shadow:0 0 0 0 transparent}}
+      @media (prefers-reduced-motion: reduce){.pulse{animation:none}}
+      .inc-row{display:flex;gap:12px;padding:11px 2px;border-bottom:1px solid var(--line);cursor:pointer;align-items:flex-start}
+      .inc-row:hover{background:var(--panel2)}
+      .inc-row:last-child{border-bottom:0}
+      .inc-row .body{flex:1;min-width:0}
+      .inc-row .ttl{font-weight:600;font-size:13.5px}
+      .inc-row .meta{color:var(--muted);font-size:12px;font-family:var(--mono);margin-top:2px}
+
+      /* ============ Kanban (detection lifecycle) ============ */
+      .kanban{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;align-items:start}
+      .kcol{background:var(--panel2);border:1px solid var(--line);padding:10px;min-height:120px}
+      .kcol h4{margin:0 0 9px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);display:flex;justify-content:space-between}
+      .kcol h4 span{font-family:var(--mono);color:var(--faint)}
+      .kcard{background:var(--panel);border:1px solid var(--line);border-top:3px solid var(--line2);padding:10px 11px;margin-bottom:9px;cursor:pointer}
+      .kcard:hover{border-color:var(--line2)}
+      .kcard.crit{border-top-color:var(--crit)} .kcard.high{border-top-color:var(--high)} .kcard.med{border-top-color:var(--med)}
+      .kcard .t{font-weight:600;font-size:12.8px;line-height:1.35}
+      .kcard .m{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:5px;line-height:1.6}
+      .kcard .fp-bad{color:var(--crit);font-weight:600}
+      .kcard .fp-ok{color:var(--ok);font-weight:600}
+
+      /* ============ MITRE matrix ============ */
+      .mitre{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+      .mtac{border:1px solid var(--line);background:var(--panel)}
+      .mtac header{background:var(--panel2);border-bottom:1px solid var(--line);padding:9px 11px;font-weight:600;font-size:12.5px;display:flex;justify-content:space-between;align-items:center}
+      .mtac header .mono{color:var(--faint);font-size:11px;font-weight:500}
+      .mtech{display:flex;justify-content:space-between;gap:8px;padding:7px 11px;font-size:12.3px;border-bottom:1px solid var(--line);align-items:center}
+      .mtech:last-child{border-bottom:0}
+      .heat{font-family:var(--mono);font-size:10.5px;font-weight:600;padding:2px 7px;white-space:nowrap}
+      .heat.h3{background:var(--crit);color:#fff}
+      .heat.h2{background:var(--high-bg);color:var(--high)}
+      .heat.h1{background:var(--med-bg);color:var(--med)}
+      .heat.h0{background:var(--chip);color:var(--faint)}
+
+      /* ============ Playbooks ============ */
+      .pb-grid{grid-template-columns:repeat(3,1fr)}
+      .pb{display:flex;flex-direction:column;gap:8px}
+      .pb .flow{display:flex;align-items:center;gap:5px;flex-wrap:wrap;font-family:var(--mono);font-size:10.8px;color:var(--muted)}
+      .pb .flow .step{border:1px solid var(--line2);padding:2px 7px;background:var(--panel2)}
+      .pb .flow .arr{color:var(--faint)}
+      .pb .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;border-top:1px solid var(--line);padding-top:10px;margin-top:2px}
+      .pb .stats div .v{font-family:var(--mono);font-weight:600;font-size:15px}
+      .pb .stats div .l{font-size:10.5px;color:var(--faint);letter-spacing:.06em;text-transform:uppercase}
+      .guard{display:flex;gap:7px;align-items:flex-start;font-size:12px;color:var(--muted);background:var(--red-soft);border:1px solid var(--line);padding:8px 10px}
+      .guard svg{width:14px;height:14px;flex:none;margin-top:1px;color:var(--red)}
+
+      /* ============ SPL search ============ */
+      .splbox{border:1px solid var(--line2);background:var(--panel)}
+      .splbox .bar-top{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--panel2)}
+      .splbox .bar-top .lbl{font-family:var(--mono);font-size:11px;letter-spacing:.1em;color:var(--faint)}
+      .spl{display:flex;gap:0}
+      .spl textarea{flex:1;border:0;background:transparent;color:var(--ink);font-family:var(--mono);font-size:13.5px;padding:13px 14px;resize:vertical;min-height:52px;outline:none;line-height:1.55}
+      .spl .run{align-self:stretch;border-radius:0;border:0;border-left:1px solid var(--red);padding:0 22px}
+      .rawlog{font-family:var(--mono);font-size:11.8px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+      .rawlog .hl{color:var(--red);font-weight:600}
+
+      /* ============ Drawer / modal / toast ============ */
+      .scrim{position:fixed;inset:0;background:rgba(5,6,10,.55);opacity:0;pointer-events:none;transition:opacity .2s;z-index:60}
+      .scrim.on{opacity:1;pointer-events:auto}
+      .drawer{position:fixed;top:0;right:0;bottom:0;width:min(560px,100vw);background:var(--panel);border-left:1px solid var(--line2);z-index:70;display:none;overflow-y:auto;box-shadow:var(--shadow)}
+      .drawer.on{display:block;animation:slidein .25s ease}
+      @keyframes slidein{from{transform:translateX(40px);opacity:.4}to{transform:none;opacity:1}}
+      @media (prefers-reduced-motion: reduce){.drawer.on{animation:none}}
+      .drawer .dhead{position:sticky;top:0;background:var(--panel);border-bottom:1px solid var(--line);padding:16px 20px;z-index:2}
+      .drawer .dbody{padding:18px 20px 30px}
+      .drawer h2{margin:6px 0 4px;font-size:18px;line-height:1.3}
+      .kv{display:grid;grid-template-columns:130px 1fr;gap:6px 14px;font-size:13px;margin:12px 0}
+      .kv dt{color:var(--faint);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;padding-top:1px}
+      .kv dd{margin:0;font-family:var(--mono);font-size:12.8px}
+      .timeline{list-style:none;margin:0;padding:0;position:relative}
+      .timeline::before{content:"";position:absolute;left:5px;top:6px;bottom:6px;width:1px;background:var(--line2)}
+      .timeline li{position:relative;padding:0 0 14px 24px;font-size:13px}
+      .timeline li::before{content:"";position:absolute;left:1px;top:5px;width:9px;height:9px;border-radius:50%;background:var(--panel);border:2px solid var(--faint)}
+      .timeline li.hot::before{border-color:var(--red);background:var(--red)}
+      .timeline .tt{font-family:var(--mono);font-size:11px;color:var(--faint)}
+      .modal-wrap{position:fixed;inset:0;z-index:80;display:none;place-items:center;padding:16px}
+      .modal-wrap.on{display:grid}
+      .modal{background:var(--panel);border:1px solid var(--line2);width:min(620px,100%);max-height:88vh;overflow-y:auto;box-shadow:var(--shadow)}
+      .modal .mhead{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:flex-start}
+      .modal .mbody{padding:16px 20px 20px}
+      .runlog{font-family:var(--mono);font-size:12.3px;line-height:1.9}
+      .runlog .step{display:flex;gap:9px;align-items:baseline;opacity:.35}
+      .runlog .step.doing{opacity:1}
+      .runlog .step.done{opacity:1}
+      .runlog .step .ic{width:14px;text-align:center;flex:none}
+      .runlog .ok{color:var(--ok)} .runlog .warn{color:var(--med)} .runlog .bad{color:var(--crit)}
+      .spin{display:inline-block;width:11px;height:11px;border:2px solid var(--line2);border-top-color:var(--red);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-1px}
+      @keyframes sp{to{transform:rotate(360deg)}}
+      @media (prefers-reduced-motion: reduce){.spin{animation-duration:2s}}
+      #toasts{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:100;display:flex;flex-direction:column;gap:8px;align-items:center;width:max-content;max-width:92vw}
+      .toast{background:var(--ink);color:var(--bg);padding:10px 16px;font-size:13px;font-weight:500;box-shadow:var(--shadow);display:flex;gap:9px;align-items:center;max-width:92vw}
+      .toast .dot{margin:0}
+
+      /* ============ Roadmap ============ */
+      .road{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;align-items:start}
+      .rq{background:var(--panel2);border:1px solid var(--line);padding:11px}
+      .rq h4{margin:0 0 3px;font-size:13px}
+      .rq .theme{font-size:11.5px;color:var(--muted);margin-bottom:10px}
+      .ritem{background:var(--panel);border:1px solid var(--line);padding:9px 10px;margin-bottom:8px;font-size:12.5px}
+      .ritem .rt{font-weight:600;line-height:1.35}
+      .ritem .rm{font-family:var(--mono);font-size:10.8px;color:var(--muted);margin-top:4px;line-height:1.6}
+      .pill{display:inline-block;font-size:10.5px;font-weight:600;letter-spacing:.05em;padding:1px 7px;border:1px solid var(--line2);color:var(--muted);text-transform:uppercase}
+      .pill.ship{color:var(--ok);border-color:var(--ok)}
+      .pill.prog{color:var(--low);border-color:var(--low)}
+      .pill.next{color:var(--high);border-color:var(--high)}
+      form.intake{display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:9px}
+      form.intake input,form.intake select{width:100%}
+
+      .foot{color:var(--faint);font-size:12px;text-align:center;padding:8px 0 0}
+
+      /* ============ Responsive ============ */
+      @media (max-width:1180px){
+        .kpis{grid-template-columns:repeat(3,1fr)}
+        .kanban{grid-template-columns:repeat(3,1fr)}
+        .mitre{grid-template-columns:repeat(2,1fr)}
+        .pb-grid{grid-template-columns:repeat(2,1fr)}
+        .road{grid-template-columns:repeat(2,1fr)}
+      }
+      @media (max-width:860px){
+        .app{grid-template-columns:1fr}
+        .side{position:static;height:auto;flex-direction:row;flex-wrap:wrap;align-items:center;padding:12px}
+        .brand{border-bottom:0;margin:0;padding:2px 6px}
+        .brand .sub,.brand .env{display:none}
+        .navbtn{width:auto;border-left:0;border-bottom:3px solid transparent;padding:8px 9px}
+        .navbtn.active{border-bottom-color:var(--red)}
+        .side .spacer,.health{display:none}
+        .cols-2,.cols-2b,.cols-3{grid-template-columns:1fr}
+        main{padding:16px 14px 32px}
+        .top{padding:10px 14px}
+        form.intake{grid-template-columns:1fr}
+      }
+      @media (max-width:620px){
+        .kpis{grid-template-columns:repeat(2,1fr)}
+        .kanban{grid-template-columns:1fr 1fr}
+        .mitre{grid-template-columns:1fr}
+        .pb-grid{grid-template-columns:1fr}
+        .road{grid-template-columns:1fr}
+        .gsearch{min-width:0;flex:1}
+        .top .right{width:100%}
+        table.resp thead{display:none}
+        table.resp tr{display:block;border-bottom:1px solid var(--line);padding:6px 0}
+        table.resp td{display:flex;justify-content:space-between;gap:14px;border-bottom:0;padding:5px 10px;text-align:right}
+        table.resp td::before{content:attr(data-l);font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint);font-weight:600;text-align:left;padding-top:2px}
+        table.resp td:first-child{text-align:left}
+        table.resp td:first-child::before{display:none}
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="app">
+      <!-- ============ Sidebar ============ -->
+      <aside class="side">
+        <div class="brand">
+          <div class="mark">
+            <span class="cube" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z" stroke="#fff" stroke-width="2"/><path d="M12 22V12M12 12 3 7m9 5 9-5" stroke="#fff" stroke-width="2"/></svg></span>
+            <span class="name">SOC</span>
+          </div>
+          <div class="sub">Security Operations Console · SecOps Platform</div>
+          <span class="env">DEMO ENVIRONMENT</span>
+        </div>
+
+        <button class="navbtn active" data-nav="mission"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>Mission Control</button>
+        <button class="navbtn" data-nav="incidents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg>Incident Queue<span class="count" id="navIncCount">7</span></button>
+        <button class="navbtn" data-nav="hunt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Search &amp; Hunt</button>
+        <button class="navbtn" data-nav="detections"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>Detection Lifecycle<span class="count grey">142</span></button>
+        <button class="navbtn" data-nav="soar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="6 3 20 12 6 21 6 3"/></svg>SOAR Playbooks<span class="count grey">38</span></button>
+        <button class="navbtn" data-nav="mitre"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg>MITRE ATT&amp;CK</button>
+        <button class="navbtn" data-nav="telemetry"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>Telemetry &amp; Logs</button>
+        <button class="navbtn" data-nav="metrics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 15l4-6 4 3 5-8"/></svg>Metrics &amp; KPIs</button>
+        <button class="navbtn" data-nav="roadmap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="19" r="3"/><circle cx="18" cy="5" r="3"/><path d="M9 19h6.5a3.5 3.5 0 0 0 0-7h-7a3.5 3.5 0 0 1 0-7H15"/></svg>Roadmap &amp; Backlog</button>
+
+        <div class="spacer"></div>
+        <div class="health">
+          <h4>PLATFORM HEALTH</h4>
+          <div class="row"><span><span class="dot"></span>Ingestion</span><b id="epsVal">48.2k EPS</b></div>
+          <div class="row"><span><span class="dot"></span>Indexers</span><b>12 / 12</b></div>
+          <div class="row"><span><span class="dot warn"></span>SOAR workers</span><b>5 / 6</b></div>
+          <div class="row"><span><span class="dot"></span>Threat intel feeds</span><b>14 active</b></div>
+        </div>
+      </aside>
+
+      <!-- ============ Main ============ -->
+      <div class="main">
+        <header class="top">
+          <div>
+            <h1 id="viewTitle">Mission Control</h1>
+            <div class="crumb" id="viewCrumb">soc / global-ops / overview</div>
+          </div>
+          <div class="right">
+            <label class="gsearch">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+              <input id="globalSearch" type="text" placeholder="Search IP, host…" aria-label="Global search" />
+            </label>
+            <div class="clock"><span id="clockDay">—</span> · <b id="clockTime">--:--:--</b> UTC</div>
+            <div class="analyst"><span class="avatar">CD</span><span>Chidumebi<br /><span class="tiny faint">SOC Analyst · Shift B</span></span></div>
+          </div>
+        </header>
+
+        <main>
+          <!-- ======== MISSION CONTROL ======== -->
+          <section class="view active" id="view-mission">
+            <div class="grid kpis" style="margin-bottom:14px">
+              <div class="kpi red"><div class="lab">Open incidents</div><div class="val" id="kOpen">9</div><div class="delta bad-up">▲ 3 vs yesterday</div></div>
+              <div class="kpi red"><div class="lab">Critical / High</div><div class="val" id="kCrit">5</div><div class="delta flat">1 critical unassigned</div></div>
+              <div class="kpi"><div class="lab">MTTD</div><div class="val">6.4<small> min</small></div><div class="delta down">▼ 18% this quarter</div></div>
+              <div class="kpi"><div class="lab">MTTR</div><div class="val">3.2<small> hrs</small></div><div class="delta down">▼ 11% this quarter</div></div>
+              <div class="kpi"><div class="lab">Alerts auto-triaged</div><div class="val">71<small>%</small></div><div class="delta good-up">▲ 9 pts QoQ</div></div>
+              <div class="kpi"><div class="lab">False-positive rate</div><div class="val">12.8<small>%</small></div><div class="delta down">▼ 2.1 pts QoQ</div></div>
+            </div>
+
+            <div class="grid cols-2" style="margin-bottom:14px">
+              <div class="card">
+                <div class="cardhead">
+                  <div><h3>Alert volume — last 24 hours</h3><div class="sub">Notable events by severity, all indexes</div></div>
+                  <span class="sp"></span>
+                  <div class="legend"><span><i style="background:var(--crit)"></i>Critical</span><span><i style="background:var(--high)"></i>High</span><span><i style="background:var(--med)"></i>Medium</span><span><i style="background:var(--low)"></i>Low</span></div>
+                </div>
+                <div id="volChart"></div>
+              </div>
+              <div class="card">
+                <div class="cardhead"><div><h3>Live event feed</h3><div class="sub">Streaming from ingestion pipeline</div></div><span class="sp"></span><span class="pulse" aria-hidden="true"></span></div>
+                <ul class="feed" id="liveFeed"></ul>
+              </div>
+            </div>
+
+            <div class="grid cols-2">
+              <div class="card">
+                <div class="cardhead"><div><h3>Notable incidents</h3><div class="sub">Highest risk-score first — click to open the investigation</div></div><span class="sp"></span><button class="btn ghost small" data-goto="incidents">Full queue →</button></div>
+                <div id="notableList"></div>
+              </div>
+              <div class="grid" style="align-content:start">
+                <div class="card">
+                  <div class="cardhead"><div><h3>Coverage snapshot</h3><div class="sub">Detection &amp; telemetry posture</div></div></div>
+                  <div style="display:grid;gap:11px">
+                    <div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>MITRE ATT&amp;CK technique coverage</span><b class="mono">68%</b></div><div class="bar" style="margin-top:5px"><i style="width:68%"></i></div></div>
+                    <div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>Log sources onboarded vs plan</span><b class="mono">86 / 104</b></div><div class="bar ok" style="margin-top:5px"><i style="width:83%"></i></div></div>
+                    <div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>Schema-normalized (CIM) events</span><b class="mono">91%</b></div><div class="bar low" style="margin-top:5px"><i style="width:91%"></i></div></div>
+                    <div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>Detections with passing unit tests</span><b class="mono">94%</b></div><div class="bar ok" style="margin-top:5px"><i style="width:94%"></i></div></div>
+                  </div>
+                  <p class="small muted" style="margin:13px 0 0">Biggest gaps: <b>cloud control-plane</b> telemetry (AWS CloudTrail parsing at 62%) and <b>OT / facilities</b> sources not yet onboarded. Both are on the Q2 telemetry roadmap.</p>
+                </div>
+                <div class="card">
+                  <div class="cardhead"><div><h3>Queue by status</h3><div class="sub">Analyst workload right now</div></div></div>
+                  <div id="queueByStatus" style="display:grid;gap:9px"></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ======== INCIDENT QUEUE ======== -->
+          <section class="view" id="view-incidents">
+            <div class="section-intro">
+              <h2>Incident queue</h2>
+              <p>Risk-scored notable events from correlation searches and AI-assisted triage. Open any incident for the full investigation — timeline, artifacts, MITRE mapping and one-click SOAR response.</p>
+            </div>
+            <div class="toolbar" id="sevFilters">
+              <button class="chipbtn on" data-sev="all">All severities</button>
+              <button class="chipbtn" data-sev="crit">Critical</button>
+              <button class="chipbtn" data-sev="high">High</button>
+              <button class="chipbtn" data-sev="med">Medium</button>
+              <button class="chipbtn" data-sev="low">Low</button>
+              <span class="sp"></span>
+              <select id="statusFilter" aria-label="Filter by status">
+                <option value="all">Any status</option><option>New</option><option>Triage</option><option>Investigating</option><option>Contained</option><option>Closed</option>
+              </select>
+            </div>
+            <div class="card" style="padding:4px 8px">
+              <table class="resp">
+                <thead><tr><th>Risk</th><th>Incident</th><th>Severity</th><th>Status</th><th>Owner</th><th>Age</th><th>Source</th></tr></thead>
+                <tbody id="incTable"></tbody>
+              </table>
+            </div>
+            <p class="small muted" style="margin-top:10px">Risk score = asset criticality × threat intel confidence × detection fidelity. Scores ≥ 75 page the on-call analyst.</p>
+          </section>
+
+          <!-- ======== SEARCH & HUNT ======== -->
+          <section class="view" id="view-hunt">
+            <div class="section-intro">
+              <h2>Search &amp; threat hunting</h2>
+              <p>A Splunk-style search bar over the demo index. Pick a saved hunt or edit the SPL and run it — results, event timeline and raw logs update below.</p>
+            </div>
+            <div class="toolbar">
+              <button class="chipbtn hunt-preset on" data-hunt="0">Impossible travel</button>
+              <button class="chipbtn hunt-preset" data-hunt="1">Beaconing to rare domains</button>
+              <button class="chipbtn hunt-preset" data-hunt="2">PowerShell abuse</button>
+              <button class="chipbtn hunt-preset" data-hunt="3">Dormant account activity</button>
+            </div>
+            <div class="splbox">
+              <div class="bar-top"><span class="lbl">SPL</span><span class="mono tiny faint">last 24h · Smart Mode</span><span style="margin-left:auto" class="mono tiny faint" id="huntMeta">2,847,112 events scanned in 1.84s</span></div>
+              <div class="spl">
+                <textarea id="splInput" rows="2" spellcheck="false" aria-label="Search processing language query"></textarea>
+                <button class="btn run" id="runSearch">Run search</button>
+              </div>
+            </div>
+            <div class="grid cols-2" style="margin-top:14px">
+              <div class="card">
+                <div class="cardhead"><div><h3>Events over time</h3><div class="sub" id="huntChartSub">Matches per hour</div></div></div>
+                <div id="huntChart"></div>
+              </div>
+              <div class="card">
+                <div class="cardhead"><div><h3>Hunt notes</h3><div class="sub">Hypothesis &amp; outcome — feeds the detection backlog</div></div></div>
+                <div id="huntNotes" class="small" style="line-height:1.65"></div>
+              </div>
+            </div>
+            <div class="card" style="margin-top:14px">
+              <div class="cardhead"><div><h3>Matching events</h3><div class="sub">Raw log view — key fields highlighted</div></div><span class="sp"></span><button class="btn ghost small" id="toDetection">Convert to detection draft →</button></div>
+              <div class="rawlog" id="huntResults"></div>
+            </div>
+          </section>
+
+          <!-- ======== DETECTION LIFECYCLE ======== -->
+          <section class="view" id="view-detections">
+            <div class="section-intro">
+              <h2>Detection lifecycle</h2>
+              <p>Every rule moves idea → build → test → production → tuning → retirement, as code, with unit tests and analyst sign-off at each gate. Drag-free demo: click a card for its quality metrics. High false-positive rules surface automatically for tuning.</p>
+            </div>
+            <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
+              <div class="kpi"><div class="lab">Detections in production</div><div class="val">142</div><div class="delta good-up">▲ 11 this quarter</div></div>
+              <div class="kpi"><div class="lab">Avg. alert fidelity</div><div class="val">87.2<small>%</small></div><div class="delta good-up">▲ 3.4 pts QoQ</div></div>
+              <div class="kpi red"><div class="lab">Rules flagged for tuning</div><div class="val">6</div><div class="delta flat">FP rate &gt; 25% for 7 days</div></div>
+              <div class="kpi"><div class="lab">Idea → prod lead time</div><div class="val">9.5<small> days</small></div><div class="delta down">▼ from 16 days in Q4</div></div>
+            </div>
+            <div class="kanban" id="kanban"></div>
+          </section>
+
+          <!-- ======== SOAR ======== -->
+          <section class="view" id="view-soar">
+            <div class="section-intro">
+              <h2>SOAR playbooks &amp; automation governance</h2>
+              <p>Automation scales safely: every playbook has an owner, an approval tier, success-rate tracking and a kill switch. High-impact actions (host isolation, account disable) require human approval. Press <b>Run</b> on any playbook to watch it execute.</p>
+            </div>
+            <div class="grid kpis" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
+              <div class="kpi"><div class="lab">Playbook runs (30d)</div><div class="val">1,284</div><div class="delta good-up">▲ 22% MoM</div></div>
+              <div class="kpi"><div class="lab">Success rate</div><div class="val">96.1<small>%</small></div><div class="delta flat">Failures auto-open a ticket</div></div>
+              <div class="kpi"><div class="lab">Analyst hours saved (30d)</div><div class="val">312<small> hrs</small></div><div class="delta good-up">≈ 1.9 FTE</div></div>
+              <div class="kpi"><div class="lab">Pending approvals</div><div class="val">3</div><div class="delta flat">High-impact actions only</div></div>
+            </div>
+            <div class="grid pb-grid" id="pbGrid"></div>
+          </section>
+
+          <!-- ======== MITRE ======== -->
+          <section class="view" id="view-mitre">
+            <div class="section-intro">
+              <h2>MITRE ATT&amp;CK coverage</h2>
+              <p>Heat = detection coverage strength per technique, weighted by threat-intel reporting against data-center and cloud operators. Gaps feed the detection and telemetry backlogs directly.</p>
+            </div>
+            <div class="legend" style="margin-bottom:12px"><span><i style="background:var(--crit)"></i>Strong (3+ detections)</span><span><i style="background:var(--high)"></i>Moderate (2)</span><span><i style="background:var(--med)"></i>Basic (1)</span><span><i style="background:var(--chip);border:1px solid var(--line2)"></i>No coverage</span><span class="sp" style="flex:1"></span><span class="mono">Overall technique coverage: <b style="color:var(--ink)">68%</b> · target 80% by Q4</span></div>
+            <div class="mitre" id="mitreGrid"></div>
+          </section>
+
+          <!-- ======== TELEMETRY ======== -->
+          <section class="view" id="view-telemetry">
+            <div class="section-intro">
+              <h2>Telemetry &amp; log onboarding</h2>
+              <p>Sources are prioritized by risk, coverage gap and investigative value — not by whoever shouts loudest. The onboarding pipeline shows parsing health and CIM normalization per source.</p>
+            </div>
+            <div class="card" style="padding:4px 8px;margin-bottom:14px">
+              <table class="resp">
+                <thead><tr><th>Source</th><th>Volume</th><th>Health</th><th>CIM normalized</th><th>MITRE value</th><th>Status</th></tr></thead>
+                <tbody id="telTable"></tbody>
+              </table>
+            </div>
+            <div class="grid cols-3">
+              <div class="card"><h3>In onboarding pipeline</h3><div class="sub" style="margin-bottom:10px">Sequenced by risk ÷ effort</div>
+                <div class="ritem"><div class="rt">AWS CloudTrail — parser fix</div><div class="rm">62% parsed · blocks 3 cloud detections · ETA 2 wks</div></div>
+                <div class="ritem"><div class="rt">OT / BMS facilities logs</div><div class="rm">New source · physical-security use cases · ETA 5 wks</div></div>
+                <div class="ritem"><div class="rt">Kubernetes audit logs</div><div class="rm">New source · container escape coverage · ETA 3 wks</div></div>
+              </div>
+              <div class="card"><h3>Data quality watch</h3><div class="sub" style="margin-bottom:10px">Auto-flagged in the last 7 days</div>
+                <div class="ritem"><div class="rt">Firewall timestamps drifting +4 min</div><div class="rm">2 sites · breaks correlation windows · ticket TEL-2214</div></div>
+                <div class="ritem"><div class="rt">EDR field rename after vendor update</div><div class="rm">process_name → proc.name · 4 detections remapped</div></div>
+              </div>
+              <div class="card"><h3>Onboarding scorecard</h3><div class="sub" style="margin-bottom:10px">How a source earns its slot</div>
+                <p class="small muted" style="line-height:1.7;margin:0">Each candidate source is scored on <b style="color:var(--ink)">risk reduction (40%)</b>, <b style="color:var(--ink)">MITRE gap closed (25%)</b>, <b style="color:var(--ink)">analyst demand (20%)</b> and <b style="color:var(--ink)">onboarding effort (15%)</b>. Scores are reviewed in the monthly telemetry council — the output is this pipeline, in this order.</p>
+              </div>
+            </div>
+          </section>
+
+          <!-- ======== METRICS ======== -->
+          <section class="view" id="view-metrics">
+            <div class="section-intro">
+              <h2>Metrics &amp; operating cadence</h2>
+              <p>The numbers the SecOps product review runs on: detection quality, response speed, automation effectiveness and onboarding throughput — reviewed weekly with detection engineering, monthly with SOC leadership.</p>
+            </div>
+            <div class="grid cols-2" style="margin-bottom:14px">
+              <div class="card">
+                <div class="cardhead"><div><h3>False-positive rate — last 8 weeks</h3><div class="sub">Tuning program effect, % of alerts closed as FP</div></div></div>
+                <div id="fpChart"></div>
+              </div>
+              <div class="card">
+                <div class="cardhead"><div><h3>Mean time to respond — by severity</h3><div class="sub">Hours, trailing 30 days vs target</div></div></div>
+                <div id="mttrChart"></div>
+              </div>
+            </div>
+            <div class="grid cols-2">
+              <div class="card" style="padding:4px 8px">
+                <table class="resp">
+                  <thead><tr><th>KPI</th><th>Now</th><th>Target</th><th>Trend</th></tr></thead>
+                  <tbody>
+                    <tr><td><b>Detection fidelity (true-positive rate)</b></td><td data-l="Now" class="mono">87.2%</td><td data-l="Target" class="mono">90%</td><td data-l="Trend" class="mono down">▲ improving</td></tr>
+                    <tr><td><b>Telemetry coverage vs plan</b></td><td data-l="Now" class="mono">83%</td><td data-l="Target" class="mono">95%</td><td data-l="Trend" class="mono down">▲ improving</td></tr>
+                    <tr><td><b>Automation success rate</b></td><td data-l="Now" class="mono">96.1%</td><td data-l="Target" class="mono">97%</td><td data-l="Trend" class="mono flat">— flat</td></tr>
+                    <tr><td><b>Playbook adoption (incidents using SOAR)</b></td><td data-l="Now" class="mono">64%</td><td data-l="Target" class="mono">80%</td><td data-l="Trend" class="mono down">▲ improving</td></tr>
+                    <tr><td><b>Detection lead time (idea → prod)</b></td><td data-l="Now" class="mono">9.5 days</td><td data-l="Target" class="mono">7 days</td><td data-l="Trend" class="mono down">▲ improving</td></tr>
+                    <tr><td><b>Analyst alert load / shift</b></td><td data-l="Now" class="mono">38</td><td data-l="Target" class="mono">≤ 35</td><td data-l="Trend" class="mono bad-up">▼ worsening</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="card">
+                <div class="cardhead"><div><h3>Operating cadence</h3><div class="sub">Where decisions actually get made</div></div></div>
+                <ul class="timeline">
+                  <li class="hot"><div class="tt">WEEKLY · TUE</div><b>Detection review</b> — FP trends, tuning queue, new rule sign-off with analyst validators.</li>
+                  <li><div class="tt">WEEKLY · THU</div><b>Triage &amp; intake</b> — stakeholder requests scored and ranked into the shared backlog.</li>
+                  <li><div class="tt">BIWEEKLY</div><b>Automation council</b> — playbook approvals, failure review, high-impact action audits.</li>
+                  <li><div class="tt">MONTHLY</div><b>Coverage review</b> — MITRE heat map vs threat intel; telemetry priorities reset.</li>
+                  <li><div class="tt">QUARTERLY</div><b>SecOps product review</b> — KPI scorecard, roadmap re-plan, launch readiness for major capabilities.</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <!-- ======== ROADMAP ======== -->
+          <section class="view" id="view-roadmap">
+            <div class="section-intro">
+              <h2>SecOps roadmap &amp; backlog</h2>
+              <p>One ranked backlog across detection content, telemetry onboarding, SOAR and platform — the single queue the PM owns. Add an intake request below and watch it get scored and slotted.</p>
+            </div>
+            <div class="road" id="roadGrid" style="margin-bottom:14px"></div>
+            <div class="grid cols-2">
+              <div class="card">
+                <div class="cardhead"><div><h3>Submit an intake request</h3><div class="sub">Structured intake — scored on impact, confidence and effort</div></div></div>
+                <form class="intake" id="intakeForm" style="grid-template-columns:1fr">
+                  <input class="txtin" id="inTitle" required placeholder="e.g. Detection for Kerberoasting against service accounts" aria-label="Request title" />
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">
+                    <select id="inType" aria-label="Request type"><option>Detection</option><option>Telemetry</option><option>SOAR playbook</option><option>Platform</option><option>Analyst workflow</option></select>
+                    <select id="inTeam" aria-label="Requesting team"><option>Threat Intel</option><option>Incident Response</option><option>SOC Tier 2</option><option>Detection Eng</option><option>Cloud Platform</option></select>
+                  </div>
+                  <button class="btn" type="submit">Score &amp; add to backlog</button>
+                </form>
+                <p class="small muted" style="margin:11px 0 0">Scoring model: <span class="mono">priority = (impact × confidence) ÷ effort</span>. Anything scoring above the current cut line is pulled into next-quarter planning; the rest stays visible here — no requests disappear into a spreadsheet.</p>
+              </div>
+              <div class="card" style="padding:4px 8px">
+                <table class="resp">
+                  <thead><tr><th>Backlog item</th><th>Type</th><th>Score</th><th>Owner</th></tr></thead>
+                  <tbody id="backlogTable"></tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+
+          <p class="foot" style="margin-top:26px">SOC — SecOps platform demo · All data on this page is simulated for demonstration · Built as a lightweight companion to the Splunk Security &amp; interactive-tour experience</p>
+        </main>
+      </div>
+    </div>
+
+    <!-- ============ Incident drawer ============ -->
+    <div class="scrim" id="scrim"></div>
+    <aside class="drawer" id="drawer" aria-label="Incident detail">
+      <div class="dhead">
+        <div style="display:flex;gap:8px;align-items:center">
+          <span id="dSev"></span><span class="status" id="dStatus"></span>
+          <span style="margin-left:auto"></span>
+          <button class="btn ghost small" id="drawerClose">Close ✕</button>
+        </div>
+        <h2 id="dTitle"></h2>
+        <div class="mono small faint" id="dId"></div>
+      </div>
+      <div class="dbody">
+        <dl class="kv">
+          <dt>Risk score</dt><dd id="dRisk"></dd>
+          <dt>Owner</dt><dd id="dOwner"></dd>
+          <dt>Opened</dt><dd id="dOpened"></dd>
+          <dt>Assets</dt><dd id="dAssets"></dd>
+          <dt>Detection</dt><dd id="dRule"></dd>
+          <dt>MITRE</dt><dd id="dMitre"></dd>
+        </dl>
+        <h3 style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint)">What happened</h3>
+        <p class="small" id="dDesc" style="line-height:1.65"></p>
+        <h3 style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-top:18px">Artifacts</h3>
+        <div id="dArtifacts"></div>
+        <h3 style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-top:18px">Timeline</h3>
+        <ul class="timeline" id="dTimeline"></ul>
+        <h3 style="font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-top:18px">Respond</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn" id="dRunPb">Run recommended playbook</button>
+          <button class="btn ghost" id="dAssign">Assign to me</button>
+          <button class="btn ghost" id="dEscalate">Escalate to IR</button>
+        </div>
+        <p class="small muted" id="dPbHint" style="margin-top:9px"></p>
+      </div>
+    </aside>
+
+    <!-- ============ Playbook run modal ============ -->
+    <div class="modal-wrap" id="pbModalWrap">
+      <div class="modal" role="dialog" aria-modal="true" aria-label="Playbook run">
+        <div class="mhead">
+          <div><h3 style="margin:0;font-size:16px" id="pbRunTitle">Playbook run</h3><div class="sub small muted" id="pbRunSub"></div></div>
+          <span style="margin-left:auto"></span>
+          <button class="btn ghost small" id="pbClose">Close ✕</button>
+        </div>
+        <div class="mbody">
+          <div class="guard" id="pbApproval" style="margin-bottom:14px;display:none">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10Z"/></svg>
+            <span><b style="color:var(--ink)">Approval gate:</b> this playbook contains a high-impact action. It will pause for analyst approval before executing that step — the control that lets automation scale safely.</span>
+          </div>
+          <div class="runlog" id="pbLog"></div>
+          <div id="pbApproveRow" style="display:none;margin-top:14px;gap:8px">
+            <button class="btn" id="pbApproveBtn">Approve high-impact action</button>
+            <button class="btn ghost" id="pbDenyBtn">Deny &amp; stop</button>
+          </div>
+          <div id="pbResult" style="display:none;margin-top:16px"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="toasts" aria-live="polite"></div>
+
+    <script>
+    "use strict";
+    const $ = s => document.querySelector(s);
+    const $$ = s => Array.from(document.querySelectorAll(s));
+
+    /* ================= DATA (simulated demo data) ================= */
+    const SEV = {crit:"Critical", high:"High", med:"Medium", low:"Low", info:"Info"};
+    let incidents = [
+      {id:"INC-90412", risk:94, sev:"crit", status:"New", owner:"Unassigned", age:"12m", src:"EDR + Identity",
+       title:"Ransomware precursor: shadow-copy deletion on file server cluster",
+       rule:"T1490 — Inhibit System Recovery (vssadmin delete shadows)",
+       mitre:"TA0040 Impact · T1490", opened:"14:02 UTC",
+       assets:"fs-prod-07, fs-prod-08 (SV5 data hall)",
+       desc:"EDR flagged vssadmin.exe deleting volume shadow copies on two production file servers, 40 seconds after a PsExec-style service install from a jump host. No encryption activity yet — this is the classic pre-ransomware staging pattern. Threat intel rates the tooling overlap with a known affiliate toolkit as high confidence.",
+       artifacts:["host: fs-prod-07 / fs-prod-08","user: svc_backup (service acct)","hash: 9f2c…a41b (vssadmin LOLBin)","src ip: 10.44.8.19 (jump host JH-02)"],
+       timeline:[["14:02","Detection fired — risk 94, paged on-call","hot"],["14:03","SOAR enrichment: asset criticality Tier-0, user normally dormant",""],["14:06","Analyst paged (no ack yet)","",""]],
+       pb:"pb-ransom"},
+      {id:"INC-90407", risk:88, sev:"crit", status:"Investigating", owner:"A. Osei", age:"47m", src:"Identity / IdP",
+       title:"Impossible travel + MFA fatigue pattern against VPN gateway",
+       rule:"T1078 — Valid Accounts: impossible travel",
+       mitre:"TA0001 Initial Access · T1078", opened:"13:27 UTC",
+       assets:"vpn-gw-02 (AM6), 3 user accounts",
+       desc:"Three accounts authenticated from Toronto, then from an anonymizing-VPN exit node 11 minutes later, each preceded by 6–9 MFA push requests. One push was approved. Sessions from the second location touched the jump-host VLAN before being challenged.",
+       artifacts:["users: m.okafor, j.lindqvist, r.patel","ip: 185.220.x.x (Tor exit)","device: unregistered · no cert","IdP: Okta push fatigue pattern"],
+       timeline:[["13:27","Detection fired — impossible travel","hot"],["13:31","Auto-enrichment: Tor exit node, 2nd detonation this week",""],["13:40","A. Osei assigned; sessions revoked for 2 of 3 accounts",""],["13:58","Approved-push account isolated pending user verification",""]],
+       pb:"pb-identity"},
+      {id:"INC-90398", risk:79, sev:"high", status:"Investigating", owner:"R. Delgado", age:"1h 20m", src:"Proxy / DNS",
+       title:"Beaconing to newly-registered domain from build server",
+       rule:"T1071.001 — C2: web protocols, low-jitter beacon",
+       mitre:"TA0011 Command & Control · T1071", opened:"12:54 UTC",
+       assets:"ci-build-14 (dev subnet)",
+       desc:"A CI build server is beaconing every 300s ±4s to a domain registered 6 days ago, with DNS-over-HTTPS resolution bypassing the corporate resolver. Payload sizes are consistent with small data staging. Build server had a dependency-confusion advisory last week.",
+       artifacts:["domain: cdn-metrics-sync[.]io (6 days old)","host: ci-build-14","dns: DoH to 8.8.8.8 bypass","egress: 412 bytes / beacon avg"],
+       timeline:[["12:54","Detection fired — beacon analytics model","hot"],["13:05","Sandbox detonation of resolved payload: stealer-like",""],["13:22","Domain blocked at proxy; host snapshot taken",""]],
+       pb:"pb-beacon"},
+      {id:"INC-90391", risk:74, sev:"high", status:"Triage", owner:"Unassigned", age:"2h 05m", src:"Cloud / AWS",
+       title:"Dormant IAM key used to enumerate S3 buckets in prod account",
+       rule:"T1078.004 — Cloud accounts: dormant key activity",
+       mitre:"TA0007 Discovery · T1580", opened:"12:09 UTC",
+       assets:"AWS prod account · 14 S3 buckets listed",
+       desc:"An access key unused for 213 days performed ListBuckets and GetObject on two buckets from an unrecognized ASN. The key belongs to a departed contractor's automation role. No data confirmed exfiltrated yet; CloudTrail parser gaps are slowing scoping.",
+       artifacts:["key: AKIA…7Q2D (dormant 213d)","asn: unrecognized hosting range","buckets: 14 listed · 2 read","note: CloudTrail parse rate 62%"],
+       timeline:[["12:09","Detection fired — dormant credential use","hot"],["12:20","Key quarantined via SCP pending scoping",""]],
+       pb:"pb-cloud"},
+      {id:"INC-90385", risk:66, sev:"high", status:"New", owner:"Unassigned", age:"2h 41m", src:"Email gateway",
+       title:"QR-code phishing wave targeting facilities staff",
+       rule:"T1566.002 — Phishing: spearphishing link (QR)",
+       mitre:"TA0001 Initial Access · T1566", opened:"11:33 UTC",
+       assets:"214 mailboxes · 9 sites",
+       desc:"214 messages with QR codes pointing to a credential-harvest page cloned from the badge-access portal. Facilities and shift staff targeted — groups with lower phishing-simulation coverage. 11 users scanned; 2 submitted credentials and have been force-reset.",
+       artifacts:["sender: spoofed internal notice","url: badge-access-verify[.]com","scans: 11 · submissions: 2","targets: facilities distribution lists"],
+       timeline:[["11:33","Detection fired — QR phish cluster","hot"],["11:47","URLs purged from 214 mailboxes via playbook",""],["12:15","2 credential resets completed; comms sent to site leads",""]],
+       pb:"pb-phish"},
+      {id:"INC-90377", risk:58, sev:"med", status:"Investigating", owner:"T. Nguyen", age:"3h 30m", src:"EDR",
+       title:"Encoded PowerShell from Outlook on executive workstation",
+       rule:"T1059.001 — PowerShell with -EncodedCommand",
+       mitre:"TA0002 Execution · T1059", opened:"10:44 UTC",
+       assets:"ws-exec-221 (EA office)",
+       desc:"Outlook spawned PowerShell with an encoded command that decoded to a download cradle. The download failed (proxy block), and no second stage executed. Likely a malicious attachment opened in preview — user reports 'an invoice PDF that looked blank'.",
+       artifacts:["host: ws-exec-221","parent: OUTLOOK.EXE → powershell.exe","payload: download cradle (blocked)","user: executive assistant account"],
+       timeline:[["10:44","Detection fired","hot"],["11:02","Host isolated by EDR policy; image queued",""]],
+       pb:"pb-endpoint"},
+      {id:"INC-90370", risk:52, sev:"med", status:"Triage", owner:"Unassigned", age:"4h 12m", src:"Network / NDR",
+       title:"Unusual SMB lateral movement pattern in cage-services VLAN",
+       rule:"T1021.002 — SMB/Windows admin shares",
+       mitre:"TA0008 Lateral Movement · T1021", opened:"10:02 UTC",
+       assets:"6 hosts · VLAN 44 (cage services)",
+       desc:"One workstation touched ADMIN$ on 6 hosts in 4 minutes — a pattern seen during a red-team exercise last quarter, but no exercise is scheduled today. Host is a vendor maintenance laptop that checked in this morning.",
+       artifacts:["host: vendor-lt-03","targets: 6 hosts via ADMIN$","vendor: on-site maintenance visit","exercise window: none scheduled"],
+       timeline:[["10:02","Detection fired","hot"],["10:20","Vendor escort confirmed on site; verifying scope",""]],
+       pb:"pb-lateral"},
+      {id:"INC-90361", risk:41, sev:"med", status:"Contained", owner:"S. Adeyemi", age:"5h 48m", src:"WAF",
+       title:"Credential-stuffing burst against customer portal API",
+       rule:"T1110.004 — Credential stuffing",
+       mitre:"TA0006 Credential Access · T1110", opened:"08:26 UTC",
+       assets:"Customer portal API (Metal portal)",
+       desc:"48k login attempts in 18 minutes from rotating residential proxies against the customer portal API. Success rate 0.03% (14 accounts), all force-reset and notified. Rate-limiting playbook contained the burst.",
+       artifacts:["attempts: 48,214 in 18 min","success: 14 accounts (reset)","proxies: residential rotation","waf: challenge rule deployed"],
+       timeline:[["08:26","Detection fired","hot"],["08:31","Rate-limit playbook auto-ran (Tier-1 automation)",""],["09:05","14 accounts reset; owners notified",""],["09:40","Marked contained — monitoring for retry",""]],
+       pb:"pb-credstuff"},
+      {id:"INC-90355", risk:33, sev:"low", status:"Investigating", owner:"J. Park", age:"7h 02m", src:"DNS",
+       title:"Possible DNS tunneling from lab subnet (low confidence)",
+       rule:"T1048.003 — Exfiltration over unencrypted/obsolete protocol",
+       mitre:"TA0010 Exfiltration · T1048", opened:"07:12 UTC",
+       assets:"lab subnet · 1 host",
+       desc:"High-entropy subdomain queries from a research lab host. Pattern also matches a known software-update mechanism; intel confidence is low. Analyst is validating against the vendor's update signature before escalating.",
+       artifacts:["host: lab-rd-19","queries: 3,900 high-entropy labels/hr","vendor match: partial (update svc)","confidence: low"],
+       timeline:[["07:12","Detection fired","hot"],["08:00","J. Park validating against vendor update signature",""]],
+       pb:"pb-dns"},
+      {id:"INC-90349", risk:27, sev:"low", status:"Closed", owner:"M. Chen", age:"9h 15m", src:"IdP",
+       title:"Service account password spray — single source, blocked",
+       rule:"T1110.003 — Password spraying",
+       mitre:"TA0006 Credential Access · T1110", opened:"04:59 UTC",
+       assets:"IdP tenant · service accounts",
+       desc:"Slow password spray (1 attempt / 9 min per account) from a single cloud IP. Zero successes; source blocked and detection threshold tuned to catch the slower cadence.",
+       artifacts:["src: single cloud IP (blocked)","attempts: 61 · successes: 0","tuning: threshold lowered 40%"],
+       timeline:[["04:59","Detection fired","hot"],["05:30","Source blocked at IdP conditional access",""],["06:15","Closed — tuning change shipped to detection repo",""]],
+       pb:"pb-identity"}
+    ];
+
+    const playbooks = {
+      "pb-ransom":{name:"Ransomware Precursor Response", tier:"Tier 2 · approval-gated", runs:46, success:"97.8%", saved:"38 min/run",
+        flow:["Trigger","Isolate hosts","Snapshot VMs","Disable account","Hunt fleet-wide","Open IR case"],
+        steps:[["Enrichment complete — asset Tier-0, blast radius 2 hosts", "ok"],["Snapshot request accepted by virtualization layer","ok"],["APPROVAL GATE — isolate fs-prod-07 & fs-prod-08 from network","gate"],["Hosts isolated — traffic drained, out-of-band access retained","ok"],["Service account svc_backup disabled in AD","ok"],["Fleet-wide hunt launched for vssadmin LOLBin pattern (0 new hits)","ok"],["IR case opened, comms bridge + exec notification queued","ok"]]},
+      "pb-identity":{name:"Identity Compromise Containment", tier:"Tier 2 · approval-gated", runs:212, success:"98.6%", saved:"24 min/run",
+        flow:["Trigger","Revoke sessions","Force reset","Check mailbox rules","Notify user"],
+        steps:[["Sessions enumerated across IdP + VPN (7 active)","ok"],["APPROVAL GATE — revoke all sessions & force password reset","gate"],["Sessions revoked; reset enforced at next sign-in","ok"],["Mailbox rules audited — no hidden forwarding rules found","ok"],["User notified via verified channel; helpdesk ticket linked","ok"]]},
+      "pb-beacon":{name:"C2 Beacon Takedown", tier:"Tier 1 · fully automated", runs:158, success:"96.2%", saved:"31 min/run",
+        flow:["Trigger","Block domain","Sinkhole DNS","Quarantine host","Collect memory"],
+        steps:[["Domain reputation confirmed — malicious (3 intel feeds agree)","ok"],["Domain blocked at proxy + DNS sinkholed","ok"],["Host quarantined to forensic VLAN","ok"],["Memory image + process tree captured for IR","ok"],["Sibling-host hunt queued (same parent process hash)","ok"]]},
+      "pb-cloud":{name:"Cloud Credential Incident", tier:"Tier 2 · approval-gated", runs:74, success:"94.6%", saved:"42 min/run",
+        flow:["Trigger","Quarantine key","Scope with CloudTrail","Rotate secrets","Review policies"],
+        steps:[["Key usage mapped — 14 ListBuckets, 2 GetObject calls","ok"],["APPROVAL GATE — attach quarantine SCP & deactivate key","gate"],["Key deactivated; SCP applied to role","ok"],["CloudTrail scoping report attached (parse gaps flagged)","warn"],["Rotation tasks created for 3 dependent services","ok"]]},
+      "pb-phish":{name:"Phishing Campaign Purge", tier:"Tier 1 · fully automated", runs:326, success:"99.1%", saved:"19 min/run",
+        flow:["Trigger","Find messages","Purge mailboxes","Block sender/URL","Reset exposed users"],
+        steps:[["Campaign clustered — 214 messages, 1 sender pattern","ok"],["URL + sender blocked at gateway","ok"],["Messages purged from all mailboxes (214/214)","ok"],["2 exposed users force-reset + coached notification sent","ok"]]},
+      "pb-endpoint":{name:"Malicious Endpoint Isolation", tier:"Tier 1 · fully automated", runs:289, success:"97.2%", saved:"22 min/run",
+        flow:["Trigger","Isolate host","Kill process tree","Collect triage package"],
+        steps:[["Parent-child chain verified (Outlook → PowerShell)","ok"],["Host isolated via EDR (user session preserved for interview)","ok"],["Process tree terminated; persistence check clean","ok"],["Triage package uploaded to case (412 MB)","ok"]]},
+      "pb-lateral":{name:"Lateral Movement Sweep", tier:"Tier 2 · approval-gated", runs:57, success:"92.9%", saved:"35 min/run",
+        flow:["Trigger","Map touches","Verify change window","Session audit","Report"],
+        steps:[["All ADMIN$ touches mapped — 6 hosts, 1 source","ok"],["No change/exercise window matched — treating as unverified","warn"],["APPROVAL GATE — force re-auth on all touched hosts","gate"],["Sessions audited; no persistence mechanisms found","ok"],["Vendor verification checklist sent to site security","ok"]]},
+      "pb-credstuff":{name:"Credential Stuffing Mitigation", tier:"Tier 1 · fully automated", runs:141, success:"98.9%", saved:"27 min/run",
+        flow:["Trigger","Rate-limit","Challenge rule","Reset hit accounts","Monitor"],
+        steps:[["Burst signature matched (residential proxy rotation)","ok"],["Rate-limit + JS challenge deployed at WAF","ok"],["14 successful accounts reset & notified","ok"],["Retry monitoring armed for 24h","ok"]]},
+      "pb-dns":{name:"DNS Tunneling Investigation", tier:"Tier 3 · analyst-led", runs:23, success:"91.3%", saved:"15 min/run",
+        flow:["Trigger","Capture queries","Compare vendor sig","Verdict"],
+        steps:[["Query corpus captured (24h, 3,900 labels/hr)","ok"],["Entropy profile compared against vendor update signature","warn"],["Analyst verdict required — automation stops here by design","warn"]]}
+    };
+
+    const detections = [
+      {stage:"Idea", sev:"high", t:"Kerberoasting against dormant service accounts", m:"Threat-intel driven · MITRE T1558.003", fp:"—"},
+      {stage:"Idea", sev:"med", t:"BMS / OT protocol anomaly (Modbus writes)", m:"Needs OT telemetry (in pipeline)", fp:"—"},
+      {stage:"Build", sev:"high", t:"CloudTrail root-account console login", m:"Detection-as-code · PR #412 in review", fp:"—"},
+      {stage:"Build", sev:"med", t:"OAuth consent grant to unverified app", m:"Sigma draft · unit tests 3/5 passing", fp:"—"},
+      {stage:"Test", sev:"crit", t:"vssadmin shadow deletion (ransomware precursor)", m:"Atomic tests 12/12 · analyst validation pending", fp:"est. 4%"},
+      {stage:"Test", sev:"high", t:"DoH bypass of corporate resolver", m:"Replay test on 7d of DNS logs", fp:"est. 9%"},
+      {stage:"Production", sev:"crit", t:"Impossible travel + MFA fatigue", m:"Fired 3× this week · 2 true positives", fp:"6%", ok:true},
+      {stage:"Production", sev:"high", t:"Dormant IAM key activity", m:"Fired today · INC-90391", fp:"11%", ok:true},
+      {stage:"Production", sev:"med", t:"Admin$ sweep across ≥5 hosts", m:"Stable · tuned Mar", fp:"14%", ok:true},
+      {stage:"Tuning", sev:"high", t:"LSASS access by non-system process", m:"FP spike after EDR update — allowlist WIP", fp:"31%", bad:true},
+      {stage:"Tuning", sev:"med", t:"USB mass-storage mount on servers", m:"Legit backup jobs polluting — scoping fix", fp:"27%", bad:true},
+      {stage:"Retire", sev:"low", t:"Legacy SMBv1 login attempts", m:"SMBv1 fully disabled estate-wide · retire Q2", fp:"—"}
+    ];
+    const STAGES = ["Idea","Build","Test","Production","Tuning","Retire"];
+
+    const mitreData = [
+      ["Reconnaissance","TA0043",[["Scanning IP blocks",1],["Gather victim network info",0]]],
+      ["Initial Access","TA0001",[["Phishing",3],["Valid accounts",3],["Exploit public-facing app",2],["External remote services",2]]],
+      ["Execution","TA0002",[["PowerShell",3],["Command & scripting",2],["Windows Command Shell",2],["Scheduled task/job",1]]],
+      ["Persistence","TA0003",[["Create account",2],["Registry run keys",2],["Boot/logon autostart",1],["Account manipulation",1]]],
+      ["Privilege Escalation","TA0004",[["Exploitation for priv-esc",1],["Access token manipulation",1],["Valid accounts",3]]],
+      ["Defense Evasion","TA0005",[["Impair defenses",2],["Masquerading",2],["Obfuscated files",2],["Indicator removal",1]]],
+      ["Credential Access","TA0006",[["OS credential dumping",2],["Brute force",3],["Kerberoasting",0],["Input capture",1]]],
+      ["Discovery","TA0007",[["Cloud storage discovery",2],["Network service scanning",2],["Account discovery",1],["File & directory discovery",1]]],
+      ["Lateral Movement","TA0008",[["SMB/admin shares",2],["Remote desktop",2],["Pass the hash",1],["Use alt auth material",0]]],
+      ["Collection","TA0009",[["Data from local system",1],["Screen capture",0],["Clipboard data",0]]],
+      ["Command & Control","TA0011",[["Web protocols",3],["DNS tunneling",1],["Encrypted channel",2],["Non-standard port",1]]],
+      ["Exfiltration","TA0010",[["Exfil over C2 channel",1],["Exfil to cloud storage",1],["Automated exfiltration",0]]],
+      ["Impact","TA0040",[["Data encrypted for impact",2],["Inhibit system recovery",3],["Service stop",2],["Defacement",0]]]
+    ];
+
+    const telemetry = [
+      ["EDR (endpoint)","96M ev/day","Healthy",98,"High","Onboarded"],
+      ["Identity / IdP (Okta)","41M ev/day","Healthy",97,"High","Onboarded"],
+      ["Firewall & proxy","210M ev/day","Healthy",93,"High","Onboarded"],
+      ["DNS (resolver)","180M ev/day","Degraded",88,"High","Clock drift — 2 sites"],
+      ["Email gateway","12M ev/day","Healthy",95,"Medium","Onboarded"],
+      ["AWS CloudTrail","28M ev/day","Degraded",62,"High","Parser fix in progress"],
+      ["Azure activity logs","19M ev/day","Healthy",90,"Medium","Onboarded"],
+      ["Kubernetes audit","—","Not started",0,"Medium","Starts in 3 wks"],
+      ["OT / BMS facilities","—","Not started",0,"High","Starts in 5 wks"],
+      ["NetFlow / NDR","340M ev/day","Healthy",84,"Medium","Onboarded"]
+    ];
+
+    let backlog = [
+      ["Composite detection: phish → credential use chain","Detection",9.2,"Detection Eng"],
+      ["CloudTrail parser remediation (62% → 95%)","Telemetry",8.8,"Platform"],
+      ["AI triage summaries for Tier-1 queue","Platform",8.1,"SecOps PM"],
+      ["OT/BMS log onboarding (physical security)","Telemetry",7.6,"Platform"],
+      ["Playbook: vendor laptop containment","SOAR playbook",7.2,"Automation"],
+      ["Analyst feedback loop inside incident drawer","Analyst workflow",6.9,"SecOps PM"],
+      ["Retire 14 legacy correlation searches","Detection",5.4,"Detection Eng"]
+    ];
+
+    const roadmapData = [
+      {q:"Q1 · Foundations", theme:"Telemetry you can trust", status:"ship", items:[["CIM normalization push — 91% of events","Platform"],["Detection-as-code pipeline + unit tests","Detection Eng"],["Tier-1 auto-triage for 3 playbook families","Automation"]]},
+      {q:"Q2 · Coverage", theme:"Close the cloud & OT gaps", status:"prog", items:[["CloudTrail parser fix + 3 cloud detections","Platform"],["Kubernetes audit onboarding","Platform"],["Kerberoasting + OAuth consent detections","Detection Eng"]]},
+      {q:"Q3 · Automation", theme:"Scale response safely", status:"next", items:[["AI-assisted triage summaries (human-in-loop)","SecOps PM"],["Approval-gated containment for Tier-0 assets","Automation"],["Composite (multi-signal) detections GA","Detection Eng"]]},
+      {q:"Q4 · Outcomes", theme:"Prove value, cut noise", status:"next", items:[["FP rate < 8% via tuning program","Detection Eng"],["MITRE coverage 68% → 80%","Threat Intel"],["Analyst load ≤ 35 alerts / shift","SOC Ops"]]}
+    ];
+
+    const hunts = [
+      {spl:"index=security sourcetype=okta:auth result=success\n| eval geo_ok = if(country_prev==country, 1, 0)\n| stats count by user, country, country_prev\n| where geo_ok=0 AND count>=1",
+       meta:"2,847,112 events scanned in 1.84s", sub:"Successful logins from a new country, per hour",
+       bars:[2,1,0,3,1,0,2,5,2,1,0,1,4,9,3,2,1,0,2,1,0,1,2,1],
+       notes:"<b>Hypothesis:</b> credential theft shows up as successful logins from a country the user has never authenticated from, inside a short window.<br><br><b>Outcome:</b> 3 users matched — all three are INC-90407. The hunt was promoted to a production detection with an MFA-fatigue correlation. This is the hunt → detection pipeline working as designed.",
+       logs:["_time=14:02:11 user=m.okafor src=185.220.14.9 country=NL result=<span class='hl'>SUCCESS</span> mfa=push app=vpn_gateway\n_time=14:01:47 user=m.okafor src=142.115.x.x country=CA result=SUCCESS mfa=push app=vpn_gateway\n_time=13:58:03 user=j.lindqvist src=185.220.14.9 country=NL result=<span class='hl'>SUCCESS</span> mfa=push app=vpn_gateway\n_time=13:52:40 user=r.patel src=185.220.14.9 country=NL result=FAILURE mfa=push (denied ×7)\n_time=13:49:12 user=r.patel src=185.220.14.9 country=NL result=FAILURE mfa=push (denied ×6)"]},
+      {spl:"index=network sourcetype=proxy dest_category!=business\n| bin _time span=5m\n| stats count by src_ip, dest_domain, _time\n| where count>40 | sort - count",
+       meta:"5,102,884 events scanned in 2.31s", sub:"Repeat connections to rare domains, per hour",
+       bars:[0,0,1,0,0,2,0,0,1,0,0,3,6,11,8,12,9,12,11,12,10,12,11,12],
+       notes:"<b>Hypothesis:</b> implant beacons produce unnaturally regular connection intervals to domains with no business purpose.<br><br><b>Outcome:</b> one build server beaconing every 300s ±4s (INC-90398). Jitter analysis is now a reusable hunt building block owned by Detection Eng.",
+       logs:["src=ci-build-14 dest=cdn-metrics-sync[.]io interval=<span class='hl'>300s ±4s</span> bytes_out=412 category=new_domain\nsrc=ci-build-14 dest=cdn-metrics-sync[.]io interval=300s ±3s bytes_out=408 category=new_domain\nsrc=ws-1042 dest=update.vendor.com interval=irregular bytes_out=2,204 category=business"]},
+      {spl:"index=endpoint sourcetype=edr process_name=powershell.exe\n| search CommandLine=\"*-enc*\" OR CommandLine=\"*DownloadString*\"\n| stats count by host, user, parent_process",
+       meta:"1,204,552 events scanned in 1.12s", sub:"Encoded PowerShell executions, per hour",
+       bars:[1,0,2,0,1,3,0,1,0,2,1,0,4,1,0,2,0,1,3,0,1,0,2,0],
+       notes:"<b>Hypothesis:</b> encoded PowerShell launched by an Office app is almost never legitimate in this estate.<br><br><b>Outcome:</b> 1 true positive (INC-90377, blocked at proxy). 6 hits traced to an IT admin script — now signed and allowlisted by hash, not by user.",
+       logs:["host=ws-exec-221 user=ea.assist parent=<span class='hl'>OUTLOOK.EXE</span> cmd=powershell -enc aQBmACAA… action=blocked\n host=ws-admin-09 user=it.ops parent=svchost.exe cmd=powershell -enc (signed script) action=allowed"]},
+      {spl:"index=cloud sourcetype=aws:cloudtrail errorCode!=AccessDenied*\n| stats earliest(_time) as first by userIdentity.accessKeyId\n| where dormant_days>180",
+       meta:"986,340 events scanned in 1.47s", sub:"Dormant-key API calls, per hour",
+       bars:[0,0,0,0,0,0,0,0,0,0,0,0,7,14,9,3,0,0,0,0,0,0,0,0],
+       notes:"<b>Hypothesis:</b> keys idle for 180+ days that suddenly act are either leaked or forgotten automation — both need a human.<br><br><b>Outcome:</b> INC-90391 (contractor key, 213 days dormant). Follow-up backlog item: auto-expire keys at 120 days of inactivity.",
+       logs:["key=AKIA…7Q2D action=<span class='hl'>ListBuckets</span> dormant_days=213 src_asn=unrecognized\nkey=AKIA…7Q2D action=GetObject bucket=prod-backups dormant_days=213\nkey=AKIA…M88P action=DescribeInstances dormant_days=201 src_asn=corporate (known automation)"]}
+    ];
+
+    /* ================= HELPERS ================= */
+    function toast(msg){
+      const t=document.createElement("div"); t.className="toast";
+      t.innerHTML='<span class="dot"></span>'+msg;
+      $("#toasts").appendChild(t);
+      setTimeout(()=>{ t.style.opacity="0"; t.style.transition="opacity .3s"; setTimeout(()=>t.remove(),320); }, 3400);
+    }
+    function sevBadge(s){ return '<span class="sev '+s+'">'+SEV[s]+'</span>'; }
+    function statusBadge(s){ return '<span class="status '+s.toLowerCase()+'">'+s+'</span>'; }
+    function barChart(el, series, colors, opts){
+      opts = opts||{};
+      const W=560,H=170,padB=18,padT=8, n=series[0].length;
+      const max=Math.max.apply(null, series.flat())*1.15 || 1;
+      const bw=(W-8)/n;
+      let g='';
+      series.forEach((s,si)=>{
+        s.forEach((v,i)=>{
+          const h=Math.max(1,(v/max)*(H-padB-padT));
+          const y=H-padB-h - si*0; // stacked visually by offset not needed; draw grouped thin
+          g+='<rect x="'+(4+i*bw+si*(bw/series.length)+1)+'" y="'+y+'" width="'+Math.max(2,(bw/series.length)-2)+'" height="'+h+'" fill="'+colors[si]+'" opacity="'+(si===0?1:.85)+'"><title>'+v+'</title></rect>';
+        });
+      });
+      let labels='';
+      for(let i=0;i<n;i+=4){ const lx=Math.min(W-20, Math.max(22, 4+i*bw+bw/2)); labels+='<text x="'+lx+'" y="'+(H-4)+'" font-size="9" fill="var(--faint)" text-anchor="middle" font-family="var(--mono)">'+String(i).padStart(2,"0")+':00</text>'; }
+      el.innerHTML='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block" role="img" aria-label="Bar chart">'+g+labels+'</svg>'+(opts.foot||'');
+    }
+
+    /* ================= NAVIGATION ================= */
+    const TITLES = {
+      mission:["Mission Control","soc / global-ops / overview"],
+      incidents:["Incident Queue","soc / response / queue"],
+      hunt:["Search & Hunt","soc / hunting / spl"],
+      detections:["Detection Lifecycle","secops / detection-engineering / lifecycle"],
+      soar:["SOAR Playbooks","secops / automation / governance"],
+      mitre:["MITRE ATT&CK Coverage","secops / coverage / mitre"],
+      telemetry:["Telemetry & Logs","secops / platform / onboarding"],
+      metrics:["Metrics & KPIs","secops / product / scorecard"],
+      roadmap:["Roadmap & Backlog","secops / product / planning"]
+    };
+    function gotoView(name){
+      $$(".view").forEach(v=>v.classList.remove("active"));
+      $("#view-"+name).classList.add("active");
+      $$(".navbtn").forEach(b=>b.classList.toggle("active", b.dataset.nav===name));
+      $("#viewTitle").textContent = TITLES[name][0];
+      $("#viewCrumb").textContent = TITLES[name][1];
+      window.scrollTo({top:0});
+    }
+    $$(".navbtn").forEach(b=>b.addEventListener("click",()=>gotoView(b.dataset.nav)));
+    $$("[data-goto]").forEach(b=>b.addEventListener("click",()=>gotoView(b.dataset.goto)));
+
+    /* ================= CLOCK ================= */
+    function tickClock(){
+      const d=new Date();
+      const days=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+      $("#clockDay").textContent = days[d.getUTCDay()]+" "+d.getUTCDate()+" "+["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getUTCMonth()];
+      $("#clockTime").textContent = [d.getUTCHours(),d.getUTCMinutes(),d.getUTCSeconds()].map(x=>String(x).padStart(2,"0")).join(":");
+    }
+    tickClock(); setInterval(tickClock,1000);
+
+    /* ================= MISSION CONTROL ================= */
+    // Alert volume: low, med, high, crit series
+    const crit=[0,1,0,0,1,0,0,2,1,0,1,0,1,2,1,0,0,1,0,1,0,0,1,1];
+    const high=[3,2,4,2,3,5,4,6,5,4,7,6,8,9,7,6,5,7,6,5,4,6,5,4];
+    const med =[9,8,11,10,12,14,13,15,12,14,16,15,17,18,16,15,14,16,15,13,12,14,13,12];
+    const low =[22,20,25,24,27,29,26,31,28,30,33,31,34,36,33,30,29,32,30,28,27,29,28,26];
+    barChart($("#volChart"), [low,med,high,crit], ["var(--low)","var(--med)","var(--high)","var(--crit)"]);
+
+    function renderNotable(){
+      const top = incidents.filter(i=>i.status!=="Closed").slice(0,5);
+      $("#notableList").innerHTML = top.map(i=>{
+        const idx = incidents.indexOf(i);
+        return '<div class="inc-row" data-inc="'+idx+'"><div class="body"><div class="ttl">'+i.title+'</div><div class="meta">'+i.id+' · risk '+i.risk+' · '+i.src+' · '+i.age+' old</div></div>'+sevBadge(i.sev)+'</div>';
+      }).join("");
+      bindIncRows();
+    }
+    function renderQueueStatus(){
+      const counts = {};
+      incidents.forEach(i=>{ if(i.status!=="Closed") counts[i.status]=(counts[i.status]||0)+1; });
+      const order=["New","Triage","Investigating","Contained"];
+      $("#queueByStatus").innerHTML = order.map(s=>{
+        const c=counts[s]||0, pct=Math.min(100,c*14);
+        return '<div><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>'+s+'</span><b class="mono">'+c+'</b></div><div class="bar'+(s==="New"?"":" ok")+'" style="margin-top:4px"><i style="width:'+pct+'%"></i></div></div>';
+      }).join("");
+    }
+
+    // Live feed
+    const feedPool = [
+      ["ok","EDR heartbeat nominal across 4,812 endpoints","edr"],
+      ["info","Correlation search <b>Impossible travel</b> evaluated — 0 new hits","siem"],
+      ["ok","Playbook <b>Phishing purge</b> completed for 12 messages","soar"],
+      ["warn","DNS source clock drift +4m at site <b>DA11</b>","telemetry"],
+      ["info","Threat intel feed sync — 3,214 new indicators","intel"],
+      ["ok","CloudTrail ingestion caught up after parser backlog","telemetry"],
+      ["warn","Rule <b>LSASS access</b> FP rate 31% — tuning queue","detection"],
+      ["info","New hunt scheduled: <b>Kerberoasting</b> (threat-intel driven)","hunting"],
+      ["ok","Index cluster green — search latency p95 1.9s","platform"],
+      ["info","Change window CHG-8812: firewall rule push at SV5","change"]
+    ];
+    let feedIdx = 0;
+    function pushFeed(){
+      const f = feedPool[feedIdx % feedPool.length]; feedIdx++;
+      const d = new Date();
+      const t = [d.getUTCHours(),d.getUTCMinutes(),d.getUTCSeconds()].map(x=>String(x).padStart(2,"0")).join(":");
+      const li = document.createElement("li");
+      li.innerHTML = '<span class="t">'+t+'</span><span class="msg">'+f[1]+'<br><span class="src">'+f[2]+'</span></span>';
+      const feed = $("#liveFeed");
+      feed.prepend(li);
+      while(feed.children.length>7) feed.removeChild(feed.lastChild);
+    }
+    for(let i=0;i<6;i++) pushFeed();
+    setInterval(pushFeed, 5000);
+    setInterval(()=>{ const e=(48.2+(Math.random()*1.6-0.8)).toFixed(1); $("#epsVal").textContent=e+"k EPS"; }, 4000);
+
+    /* ================= INCIDENT QUEUE ================= */
+    let sevFilter="all";
+    function renderIncidents(){
+      const sf = $("#statusFilter").value;
+      const rows = incidents.filter(i=>(sevFilter==="all"||i.sev===sevFilter)&&(sf==="all"||i.status===sf));
+      $("#incTable").innerHTML = rows.length ? rows.map(i=>{
+        const idx=incidents.indexOf(i);
+        return '<tr class="clickable" data-inc="'+idx+'">'
+          +'<td data-l="Incident"><div class="mono" style="font-weight:600;font-size:15px">'+i.risk+'</div><div class="mono tiny faint">'+i.id+'</div></td>'
+          +'<td data-l="Title"><b>'+i.title+'</b><div class="tiny faint mono">'+i.rule+'</div></td>'
+          +'<td data-l="Severity">'+sevBadge(i.sev)+'</td>'
+          +'<td data-l="Status">'+statusBadge(i.status)+'</td>'
+          +'<td data-l="Owner">'+i.owner+'</td>'
+          +'<td data-l="Age" class="mono">'+i.age+'</td>'
+          +'<td data-l="Source" class="small muted">'+i.src+'</td></tr>';
+      }).join("") : '<tr><td colspan="7" class="muted" style="padding:18px 10px">No incidents match this filter. Nice and quiet — suspiciously quiet.</td></tr>';
+      bindIncRows();
+      const open = incidents.filter(i=>i.status!=="Closed").length;
+      $("#navIncCount").textContent = open;
+      $("#kOpen").textContent = open; // matches the queue-by-status breakdown and the sidebar badge
+      $("#kCrit").textContent = incidents.filter(i=>(i.sev==="crit"||i.sev==="high")&&i.status!=="Closed").length;
+    }
+    function bindIncRows(){
+      $$("[data-inc]").forEach(el=>{
+        el.onclick=()=>openIncident(parseInt(el.dataset.inc,10));
+        el.setAttribute("role","button");
+        el.setAttribute("tabindex","0");
+        el.setAttribute("aria-label","Open incident: "+incidents[parseInt(el.dataset.inc,10)].title);
+        el.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); openIncident(parseInt(el.dataset.inc,10)); } };
+      });
+    }
+    $("#sevFilters").addEventListener("click",e=>{
+      const b=e.target.closest("[data-sev]"); if(!b) return;
+      sevFilter=b.dataset.sev;
+      $$("#sevFilters .chipbtn").forEach(c=>c.classList.toggle("on",c===b));
+      renderIncidents();
+    });
+    $("#statusFilter").addEventListener("change",renderIncidents);
+
+    /* ================= DRAWER ================= */
+    let currentInc = null;
+    function openIncident(idx){
+      const i = incidents[idx]; currentInc = i;
+      $("#dSev").innerHTML = sevBadge(i.sev);
+      const st=$("#dStatus"); st.textContent=i.status; st.className="status "+i.status.toLowerCase();
+      $("#dTitle").textContent = i.title;
+      $("#dId").textContent = i.id+" · source: "+i.src;
+      $("#dRisk").textContent = i.risk+" / 100";
+      $("#dOwner").textContent = i.owner;
+      $("#dOpened").textContent = i.opened;
+      $("#dAssets").textContent = i.assets;
+      $("#dRule").textContent = i.rule;
+      $("#dMitre").textContent = i.mitre;
+      $("#dDesc").textContent = i.desc;
+      $("#dArtifacts").innerHTML = i.artifacts.map(a=>'<span class="tag">'+a+'</span>').join("");
+      $("#dTimeline").innerHTML = i.timeline.map(t=>'<li class="'+(t[2]||"")+'"><div class="tt">'+t[0]+' UTC</div>'+t[1]+'</li>').join("");
+      const pb = playbooks[i.pb];
+      $("#dPbHint").innerHTML = "Recommended: <b>"+pb.name+"</b> ("+pb.tier+"). Success rate "+pb.success+", saves ~"+pb.saved+".";
+      $("#scrim").classList.add("on"); $("#drawer").classList.add("on");
+    }
+    function closeDrawer(){ $("#scrim").classList.remove("on"); $("#drawer").classList.remove("on"); }
+    $("#drawerClose").addEventListener("click",closeDrawer);
+    $("#scrim").addEventListener("click",closeDrawer);
+    document.addEventListener("keydown",e=>{ if(e.key==="Escape"){ closeDrawer(); closePbModal(); }});
+    $("#dAssign").addEventListener("click",()=>{
+      if(!currentInc) return;
+      currentInc.owner="Chidumebi (you)";
+      if(currentInc.status==="New") currentInc.status="Triage";
+      renderIncidents(); renderNotable(); renderQueueStatus(); openIncident(incidents.indexOf(currentInc));
+      toast("Incident assigned to you — status moved to Triage");
+    });
+    $("#dEscalate").addEventListener("click",()=>toast("Escalated to Incident Response — IR lead paged with full context attached"));
+    $("#dRunPb").addEventListener("click",()=>{ if(currentInc) runPlaybook(currentInc.pb, currentInc); });
+
+    /* ================= SOAR ================= */
+    function renderPlaybooks(){
+      $("#pbGrid").innerHTML = Object.keys(playbooks).map(k=>{
+        const p=playbooks[k];
+        const flow=p.flow.map((s,i)=> (i? '<span class="arr">→</span>':'')+'<span class="step">'+s+'</span>').join("");
+        return '<div class="card pb"><div><h3>'+p.name+'</h3><div class="sub">'+p.tier+'</div></div>'
+          +'<div class="flow">'+flow+'</div>'
+          +'<div class="stats"><div><div class="v">'+p.runs+'</div><div class="l">Runs · 30d</div></div><div><div class="v">'+p.success+'</div><div class="l">Success</div></div><div><div class="v">'+p.saved.split(" ")[0]+'<span style="font-size:11px"> min</span></div><div class="l">Saved / run</div></div></div>'
+          +'<button class="btn ghost small" data-runpb="'+k+'" style="align-self:flex-start">▶ Run playbook</button></div>';
+      }).join("");
+      $$("[data-runpb]").forEach(b=>b.addEventListener("click",()=>runPlaybook(b.dataset.runpb, null)));
+    }
+
+    let pbTimers=[], pbRunId=0;
+    function runPlaybook(key, inc){
+      const p = playbooks[key]; if(!p) return;
+      pbTimers.forEach(clearTimeout); pbTimers=[];
+      const runId = ++pbRunId;
+      closeDrawer();
+      $("#pbModalWrap").classList.add("on");
+      $("#pbRunTitle").textContent = p.name;
+      $("#pbRunSub").textContent = p.tier + (inc ? " · attached to "+inc.id : " · manual run from SOAR console");
+      $("#pbResult").style.display="none";
+      $("#pbApproveRow").style.display="none";
+      const hasGate = p.steps.some(s=>s[1]==="gate");
+      $("#pbApproval").style.display = hasGate ? "flex" : "none";
+      const log = $("#pbLog");
+      log.innerHTML = p.steps.map((s,i)=>'<div class="step" data-step="'+i+'"><span class="ic">○</span><span>'+s[0]+'</span></div>').join("");
+      function runFrom(idx){
+        if(runId!==pbRunId) return;
+        if(idx>=p.steps.length){ finishPb(p, inc, true); return; }
+        const s = p.steps[idx];
+        const row = log.querySelector('[data-step="'+idx+'"]');
+        row.classList.add("doing");
+        row.querySelector(".ic").innerHTML = '<span class="spin"></span>';
+        pbTimers.push(setTimeout(()=>{
+          if(runId!==pbRunId) return;
+          if(s[1]==="gate"){
+            row.querySelector(".ic").textContent="⏸";
+            $("#pbApproveRow").style.display="flex";
+            $("#pbApproveBtn").onclick=()=>{ if(runId!==pbRunId) return; $("#pbApproveRow").style.display="none"; markDone(row,"ok"); runFrom(idx+1); };
+            $("#pbDenyBtn").onclick=()=>{ if(runId!==pbRunId) return; $("#pbApproveRow").style.display="none"; row.classList.add("done"); row.querySelector(".ic").innerHTML='<span class="bad">✕</span>'; finishPb(p, inc, false); };
+          } else {
+            markDone(row, s[1]);
+            runFrom(idx+1);
+          }
+        }, 700));
+      }
+      pbTimers.push(setTimeout(()=>runFrom(0), 450));
+    }
+    function markDone(row, kind){
+      row.classList.remove("doing"); row.classList.add("done");
+      row.querySelector(".ic").innerHTML = kind==="warn" ? '<span class="warn">▲</span>' : '<span class="ok">✓</span>';
+    }
+    function finishPb(p, inc, success){
+      const r=$("#pbResult"); r.style.display="block";
+      if(success){
+        r.innerHTML='<div class="guard" style="background:var(--ok-bg)"><span><b style="color:var(--ink)">Run complete.</b> All actions logged to the case timeline with full audit trail. Estimated analyst time saved: <b style="color:var(--ink)">'+p.saved+'</b>. '+(inc?'Incident status updated.':'')+'</span></div>';
+        if(inc && inc.status!=="Closed"){ inc.status="Contained"; renderIncidents(); renderNotable(); renderQueueStatus(); }
+        toast("Playbook finished: "+p.name);
+      } else {
+        r.innerHTML='<div class="guard"><span><b style="color:var(--ink)">Run stopped at the approval gate.</b> No high-impact action was taken. The incident stays in its current state and the denial is recorded in the audit log — governance working as intended.</span></div>';
+        toast("Playbook stopped — approval denied, no action taken");
+      }
+    }
+    function closePbModal(){ $("#pbModalWrap").classList.remove("on"); pbRunId++; pbTimers.forEach(clearTimeout); pbTimers=[]; $("#pbApproveRow").style.display="none"; }
+    $("#pbClose").addEventListener("click",closePbModal);
+
+    /* ================= DETECTIONS KANBAN ================= */
+    function renderKanban(){
+      $("#kanban").innerHTML = STAGES.map(st=>{
+        const cards = detections.filter(d=>d.stage===st);
+        return '<div class="kcol"><h4>'+st+'<span>'+cards.length+'</span></h4>'+cards.map(d=>{
+          const fp = d.bad ? '<span class="fp-bad">FP '+d.fp+'</span>' : (d.ok ? '<span class="fp-ok">FP '+d.fp+'</span>' : 'FP '+d.fp);
+          return '<div class="kcard '+d.sev+'" data-det="'+d.t+'"><div class="t">'+d.t+'</div><div class="m">'+d.m+'<br>'+fp+'</div></div>';
+        }).join("")+'</div>';
+      }).join("");
+      $$("[data-det]").forEach(c=>c.addEventListener("click",()=>{
+        const d = detections.find(x=>x.t===c.dataset.det);
+        toast("<b>"+d.t+"</b> — stage: "+d.stage+" · "+d.m);
+      }));
+    }
+
+    /* ================= MITRE ================= */
+    function renderMitre(){
+      $("#mitreGrid").innerHTML = mitreData.map(t=>{
+        return '<div class="mtac"><header>'+t[0]+'<span class="mono">'+t[1]+'</span></header>'
+          + t[2].map(x=>'<div class="mtech"><span>'+x[0]+'</span><span class="heat h'+x[1]+'">'+(x[1]===0?"NO COVERAGE":x[1]+" DETECTION"+(x[1]>1?"S":""))+'</span></div>').join("")
+          +'</div>';
+      }).join("");
+    }
+
+    /* ================= TELEMETRY ================= */
+    function renderTelemetry(){
+      $("#telTable").innerHTML = telemetry.map(r=>{
+        const health = r[2]==="Healthy" ? '<span style="color:var(--ok);font-weight:600">● Healthy</span>' : r[2]==="Degraded" ? '<span style="color:var(--med);font-weight:600">● Degraded</span>' : '<span class="faint">○ Not started</span>';
+        const barCls = r[3]>=90?"ok":r[3]>=75?"low":r[3]>0?"med":"";
+        return '<tr><td data-l="Source"><b>'+r[0]+'</b></td><td data-l="Volume" class="mono">'+r[1]+'</td><td data-l="Health">'+health+'</td>'
+          +'<td data-l="CIM"><div style="display:flex;align-items:center;gap:8px;justify-content:flex-end"><span class="mono">'+r[3]+'%</span><span class="bar '+barCls+'" style="width:74px"><i style="width:'+r[3]+'%"></i></span></div></td>'
+          +'<td data-l="MITRE value">'+r[4]+'</td><td data-l="Status" class="small muted">'+r[5]+'</td></tr>';
+      }).join("");
+    }
+
+    /* ================= METRICS CHARTS ================= */
+    (function(){
+      const fp=[21,20,19,19,17,16,14,12.8];
+      const W=560,H=170,max=24;
+      let pts = fp.map((v,i)=>[(30+i*70), H-26-(v/max)*(H-46)]);
+      let path = pts.map((p,i)=>(i?"L":"M")+p[0].toFixed(1)+" "+p[1].toFixed(1)).join(" ");
+      let dots = pts.map(p=>'<circle cx="'+p[0]+'" cy="'+p[1]+'" r="3.5" fill="var(--red)"/>').join("");
+      let labs = fp.map((v,i)=>'<text x="'+pts[i][0]+'" y="'+(pts[i][1]-10)+'" font-size="10.5" fill="var(--muted)" text-anchor="middle" font-family="var(--mono)">'+v+'%</text>').join("");
+      let wk = fp.map((v,i)=>'<text x="'+pts[i][0]+'" y="'+(H-8)+'" font-size="9.5" fill="var(--faint)" text-anchor="middle" font-family="var(--mono)">W'+(i+1)+'</text>').join("");
+      $("#fpChart").innerHTML='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;display:block" role="img" aria-label="False positive rate trend"><line x1="30" y1="'+(H-26)+'" x2="'+(W-10)+'" y2="'+(H-26)+'" stroke="var(--line2)"/><path d="'+path+'" fill="none" stroke="var(--red)" stroke-width="2.5"/>'+dots+labs+wk+'</svg>';
+      const mttr=[["Critical",0.8,1],["High",2.4,4],["Medium",9.5,24],["Low",26,72]];
+      $("#mttrChart").innerHTML = mttr.map(r=>{
+        const pct=Math.min(100,(r[1]/r[2])*100);
+        return '<div style="margin-bottom:13px"><div style="display:flex;justify-content:space-between;font-size:12.5px"><span>'+r[0]+'</span><span class="mono"><b>'+r[1]+'h</b> <span class="faint">/ target '+r[2]+'h</span></span></div><div class="bar ok" style="margin-top:5px"><i style="width:'+pct+'%"></i></div></div>';
+      }).join("")+'<p class="small muted" style="margin:4px 0 0">All severities inside target. Low-severity MTTR is dominated by queue wait, not hands-on time — the argument for expanding Tier-1 auto-triage.</p>';
+    })();
+
+    /* ================= HUNT ================= */
+    let huntIdx = 0;
+    function renderHunt(){
+      const h = hunts[huntIdx];
+      $("#splInput").value = h.spl;
+      $("#huntMeta").textContent = h.meta;
+      $("#huntChartSub").textContent = h.sub;
+      $("#huntNotes").innerHTML = h.notes;
+      $("#huntResults").innerHTML = h.logs.join("\n");
+      barChart($("#huntChart"), [h.bars], ["var(--red)"]);
+    }
+    $$(".hunt-preset").forEach(b=>b.addEventListener("click",()=>{
+      huntIdx = parseInt(b.dataset.hunt,10);
+      $$(".hunt-preset").forEach(c=>c.classList.toggle("on",c===b));
+      renderHunt();
+    }));
+    $("#runSearch").addEventListener("click",()=>{
+      const btn=$("#runSearch"); btn.disabled=true; btn.textContent="Searching…";
+      $("#huntResults").textContent="Running search across 12 indexers…";
+      setTimeout(()=>{ btn.disabled=false; btn.textContent="Run search"; renderHunt(); toast("Search complete — "+hunts[huntIdx].meta); }, 750);
+    });
+    $("#toDetection").addEventListener("click",()=>{
+      gotoView("detections");
+      toast("Hunt converted to a detection draft in the <b>Build</b> column — with unit tests stubbed from these results");
+    });
+    $("#globalSearch").addEventListener("keydown",e=>{
+      if(e.key==="Enter" && e.target.value.trim()){
+        gotoView("hunt");
+        toast("Global search pivoted to Search &amp; Hunt for: <span class='mono'>"+e.target.value.replace(/</g,"&lt;")+"</span>");
+      }
+    });
+
+    /* ================= ROADMAP & BACKLOG ================= */
+    function renderRoadmap(){
+      $("#roadGrid").innerHTML = roadmapData.map(q=>{
+        return '<div class="rq"><h4>'+q.q+'</h4><div class="theme">'+q.theme+'</div>'
+          + q.items.map(it=>'<div class="ritem"><div class="rt">'+it[0]+'</div><div class="rm">owner: '+it[1]+'</div></div>').join("")
+          + '<span class="pill '+q.status+'">'+(q.status==="ship"?"Shipped":q.status==="prog"?"In progress":"Planned")+'</span></div>';
+      }).join("");
+    }
+    function renderBacklog(){
+      const sorted = backlog.slice().sort((a,b)=>b[2]-a[2]);
+      $("#backlogTable").innerHTML = sorted.map(b=>'<tr><td data-l="Item"><b>'+b[0]+'</b></td><td data-l="Type" class="small muted">'+b[1]+'</td><td data-l="Score" class="mono" style="font-weight:600">'+b[2].toFixed(1)+'</td><td data-l="Owner" class="small muted">'+b[3]+'</td></tr>').join("");
+    }
+    $("#intakeForm").addEventListener("submit",e=>{
+      e.preventDefault();
+      const title=$("#inTitle").value.trim(); if(!title) return;
+      const score = Math.round((5.5 + Math.random()*4)*10)/10;
+      backlog.push([title.replace(/</g,"&lt;"), $("#inType").value, score, $("#inTeam").value]);
+      renderBacklog();
+      $("#inTitle").value="";
+      toast("Intake scored <b>"+score.toFixed(1)+"</b> and added to the ranked backlog"+(score>=7.5?" — above the cut line for next-quarter planning":""));
+    });
+
+    /* ================= INIT ================= */
+    renderNotable(); renderQueueStatus(); renderIncidents(); renderPlaybooks();
+    renderKanban(); renderMitre(); renderTelemetry(); renderHunt(); renderRoadmap(); renderBacklog();
+    </script>
+  </body>
+</html>
