@@ -1,4 +1,4 @@
-const TABS = [["mission","Mission Control"],["backlog","Backlog"],["detections","Detections"],["telemetry","Telemetry"],["soar","SOAR"],["roadmap","Roadmap"],["launches","Launches"],["ask","Ask OmniBrain"]];
+const TABS = [["mission","Mission Control"],["backlog","Backlog"],["detections","Detections"],["telemetry","Telemetry"],["soar","SOAR"],["roadmap","Roadmap"],["launches","Launches"],["mitre","MITRE"],["ask","Ask OmniBrain"]];
 let D = null;
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -23,13 +23,27 @@ function rowHtml(cells) { return "<tr>" + cells.map(c => `<td>${c}</td>`).join("
 function render() {
   if (!D) return;
   const k = D.kpis;
+  const mt = D.kpis.mttr_by_severity || {};
+  const mh = D.mitre_heatmap || {};
   $("#view-mission").innerHTML = `<h2>Mission Control</h2><div class="brief">${esc(D.brief)}</div>
     <div class="cards">
-      <div class="card"><b>${k.fidelity}%</b>Fidelity</div><div class="card"><b>${k.mttr_mins}m</b>MTTR</div>
+      <div class="card"><b>${k.fidelity}%</b>Fidelity</div><div class="card"><b>${k.mttr_mins}m</b>MTTR (${esc(k.mttr_source || "")})</div>
       <div class="card"><b>${k.coverage}%</b>Coverage</div><div class="card"><b>${k.automation_rate}%</b>Automation</div>
       <div class="card"><b>${k.hours_saved}</b>Hours saved</div><div class="card"><b>${k.open_backlog}</b>Open backlog</div>
       <div class="card"><b>${k.prod_detections}</b>Prod detections</div><div class="card"><b>${k.blocked_items}</b>Blocked items</div>
     </div>
+    <h3>MTTR by severity — industry benchmarks, not an official standard</h3>
+    <p>Seed incident rows are simulated samples. Logging a real incident below moves MTTR and its pass/breach status.</p>
+    <table><tr><th>Severity</th><th>Mean</th><th>Median</th><th>Count</th><th>Threshold</th><th>Status</th></tr>
+    ${Object.entries(mt).map(([sev, v]) => rowHtml([esc(sev), v.mean == null ? "—" : v.mean + "m", v.median == null ? "—" : v.median + "m", v.count, v.threshold_mins + "m",
+      `<span class="${v.status === "breach" ? "blocked" : v.status === "pass" ? "ready" : ""}">${v.status}</span>`])).join("")}</table>
+    <form onsubmit="return logIncident(event)"><input name="title" placeholder="Incident title" required>
+    <select name="severity"><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select>
+    <input name="mttr_mins" type="number" step="any" placeholder="Response time (minutes)" required><button class="primary">Log incident response time</button></form>
+    <h3>MITRE ATT&amp;CK coverage</h3>
+    <p>${mh.unique_techniques || 0} unique techniques covered · ${mh.tactics_covered || 0} tactics covered, ${mh.tactics_partial || 0} partial, ${mh.tactics_gap || 0} with gaps.
+    Gaps: ${(mh.gaps || []).join(", ") || "none"}. Prioritise: ${(mh.lowest_coverage_tactics || []).slice(0, 5).join(", ")}.
+    See the MITRE tab for the full grid.</p>
     <p><button class="primary" onclick="refreshBrief()">Refresh daily brief</button></p>
     <h3>Decisions</h3><ul>${D.decisions.map(d => `<li><b>${esc(d.title)}</b> — ${esc(d.context)} (${esc(d.owner)})</li>`).join("")}</ul>`;
   $("#view-backlog").innerHTML = `<h2>Backlog (RICE-ranked)</h2>
@@ -59,6 +73,18 @@ function render() {
   $("#view-launches").innerHTML = `<h2>Launches</h2>${D.launches.map(l => `<div class="card"><h3>${esc(l.name)}</h3>
     <p>Target ${esc(l.target_date)} — <span class="${l.launch_status === 'BLOCKED' ? 'blocked' : 'ready'}">${l.launch_status}</span> until all checks pass.</p>
     <ul>${l.checks.map((c,i) => `<li><label><input type="checkbox" ${c.done ? "checked" : ""} onchange="toggleCheck(${l.id},${i})"> ${esc(c.label)}</label></li>`).join("")}</ul></div>`).join("")}`;
+  const mh2 = D.mitre_heatmap || {tactics: []};
+  $("#view-mitre").innerHTML = `<h2>MITRE ATT&amp;CK Heat Map</h2><p>Derived live from detection MITRE codes — not a separate hardcoded copy.
+    Cell colour: deep red = Production (score 3), lighter red/amber = Testing/Tuning/Deployment (2) or Idea/Development (1), grey = gap.
+    Hover or click a cell for stage, fidelity and false-positive rate.</p>
+    <p><b>${mh2.unique_techniques || 0} unique techniques</b> · ${mh2.tactics_covered || 0} covered / ${mh2.tactics_partial || 0} partial / ${mh2.tactics_gap || 0} gap tactics.</p>
+    <div class="mitre-grid">${(mh2.tactics || []).map(t => `<div class="tactic ${t.tactic_status}">
+      <h3>${esc(t.tactic)}</h3><p class="tactic-status">${t.tactic_status} · ${t.technique_count} technique(s)</p>
+      ${t.techniques.length ? t.techniques.map(te => `<div class="tech-cell score-${te.coverage_score}" title="${esc(te.id)} ${esc(te.name)} — ${esc(te.stage)}, fidelity ${te.fidelity}%, FP ${te.fp_rate}% — detections: ${esc(te.detections.join(", "))}" onclick="alert('${esc(te.id)} ${esc(te.name)}\\nStage: ${esc(te.stage)}\\nFidelity: ${te.fidelity}%\\nFP: ${te.fp_rate}%\\nDetections: ${esc(te.detections.join(", "))}')">
+        <b>${esc(te.id)}</b><span>${esc(te.name)}</span><span>${esc(te.stage)} · ${te.fidelity}%</span></div>`).join("") : `<div class="tech-cell gap">No detection — gap</div>`}
+    </div>`).join("")}</div>
+    <h3>Gaps to prioritise</h3><p>${(mh2.gaps || []).join(", ") || "No gaps."}</p>
+    <p>Lowest coverage first: ${(mh2.lowest_coverage_tactics || []).join(", ")}</p>`;
   $("#view-ask").innerHTML = `<h2>Ask OmniBrain</h2><p>Offline, grounded in the live workspace above. No external service is called.</p>
     <form onsubmit="return ask(event)"><input name="q" placeholder="e.g. What should we prioritise this week?" style="width:60%" required><button class="primary">Ask</button></form><div id="askOut"></div>
     <h3>Draft a document</h3><form onsubmit="return draft(event)"><select name="kind"><option value="prd">PRD</option><option value="runbook">Runbook</option><option value="launch-plan">Launch plan</option></select>
@@ -66,6 +92,10 @@ function render() {
 }
 async function load() { D = await api("/api/dashboard"); render(); }
 async function refreshBrief() { const r = await api("/api/refresh-brief", "POST", {}); alert(r.brief); await load(); }
+async function logIncident(e) { e.preventDefault(); const f = new FormData(e.target);
+  try { await api("/api/incidents", "POST", {title: f.get("title"), severity: f.get("severity"), mttr_mins: +f.get("mttr_mins")}); }
+  catch (err) { alert(err.message); return false; }
+  await load(); return false; }
 async function addBacklog(e) { e.preventDefault(); const f = new FormData(e.target);
   await api("/api/backlog", "POST", {title: f.get("title"), reach: +f.get("reach"), impact: +f.get("impact"), confidence: +f.get("confidence"), effort: +f.get("effort"), team: f.get("team"), type: f.get("type")}); await load(); return false; }
 async function setBacklog(id, status) { await api("/api/backlog/" + id, "PATCH", {status}); await load(); }
