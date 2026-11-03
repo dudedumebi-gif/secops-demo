@@ -44,7 +44,12 @@ function render() {
     <p>${mh.unique_techniques || 0} unique techniques covered · ${mh.tactics_covered || 0} tactics covered, ${mh.tactics_partial || 0} partial, ${mh.tactics_gap || 0} with gaps.
     Gaps: ${(mh.gaps || []).join(", ") || "none"}. Prioritise: ${(mh.lowest_coverage_tactics || []).slice(0, 5).join(", ")}.
     See the MITRE tab for the full grid.</p>
-    <p><button class="primary" onclick="refreshBrief()">Refresh daily brief</button></p>
+    <h3>External threat context — public feeds only, not internal telemetry</h3>
+    <p>Sources: CISA KEV, abuse.ch URLhaus, NVD CVE (MITRE enrichment is the local mapping; full STIX is not downloaded at runtime).
+    Status: ${esc((D.threat_intel && D.threat_intel.status) || "empty")} · Fetched: ${esc((D.threat_intel && D.threat_intel.fetched_at) || "never")}</p>
+    <div>${(D.threat_intel && D.threat_intel.sources || []).map(s => `<div class="card"><b>${esc(s.source)}</b> (${s.count} items, ${esc(s.fetched_at)})
+      <ul>${(s.items || []).slice(0, 5).map(it => `<li>${esc(it.cveID || it.id || it.url || JSON.stringify(it))} ${esc(it.vendorProject || it.product || it.threat || "")}</li>`).join("")}</ul></div>`).join("") || "<p>No cached threat intel yet — use Refresh below. Dashboard still works offline.</p>"}</div>
+    <p><button class="primary" onclick="refreshThreatIntel()">Refresh external threat context</button> <button class="primary" onclick="refreshBrief()">Refresh daily brief</button></p>
     <h3>Decisions</h3><ul>${D.decisions.map(d => `<li><b>${esc(d.title)}</b> — ${esc(d.context)} (${esc(d.owner)})</li>`).join("")}</ul>`;
   $("#view-backlog").innerHTML = `<h2>Backlog (RICE-ranked)</h2>
     <form onsubmit="return addBacklog(event)"><input name="title" placeholder="Title" required>
@@ -84,6 +89,13 @@ function render() {
         <b>${esc(te.id)}</b><span>${esc(te.name)}</span><span>${esc(te.stage)} · ${te.fidelity}%</span></div>`).join("") : `<div class="tech-cell gap">No detection — gap</div>`}
     </div>`).join("")}</div>
     <h3>Gaps to prioritise</h3><p>${(mh2.gaps || []).join(", ") || "No gaps."}</p>
+    <p><i>${esc(mh2.primary_tactic_gap_note || "")}</i></p>
+    <h3>Gap mitigations — P0 attacker progression first</h3>
+    <div class="mitre-grid">${(mh2.mitigations || []).map(m => `<div class="tactic"><h3>${esc(m.tactic)}</h3>
+      <p><b>${esc(m.recommended_detection)}</b> (${esc(m.technique)}${m.also_technique ? " / " + esc(m.also_technique) : ""})</p>
+      <p>Log source: ${esc(m.log_source_needed)}</p><p>NIST: ${esc(m.nist_function)} · Effort ${esc(m.effort)} · Priority ${esc(m.priority)}</p>
+      <p>${esc(m.suggested_backlog_title)}</p>
+      <button class="primary" onclick="addMitigation('${esc(m.tactic)}')">Add to backlog</button></div>`).join("") || "<p>No mitigations.</p>"}</div>
     <p>Lowest coverage first: ${(mh2.lowest_coverage_tactics || []).join(", ")}</p>`;
   $("#view-ask").innerHTML = `<h2>Ask OmniBrain</h2><p>Offline, grounded in the live workspace above. No external service is called.</p>
     <form onsubmit="return ask(event)"><input name="q" placeholder="e.g. What should we prioritise this week?" style="width:60%" required><button class="primary">Ask</button></form><div id="askOut"></div>
@@ -110,8 +122,17 @@ async function approvePb(id) { try { await api("/api/playbooks/" + id + "/approv
 async function addRoad(e) { e.preventDefault(); const f = new FormData(e.target); await api("/api/roadmap", "POST", {title: f.get("title"), quarter: f.get("quarter")}); await load(); return false; }
 async function toggleCheck(id, idx) { await api(`/api/launches/${id}/checks/${idx}/toggle`, "POST", {}); await load(); }
 async function ask(e) { e.preventDefault(); const r = await api("/api/ask", "POST", {question: new FormData(e.target).get("q")});
-  $("#askOut").innerHTML = `<div class="brief"><p>${esc(r.summary)}</p><ul>${r.actions.map(a => `<li>${esc(a)}</li>`).join("")}</ul><p><b>Risks:</b></p><ul>${r.risks.map(a => `<li>${esc(a)}</li>`).join("")}</ul></div>`; return false; }
+  const rs = r.reasoning || r;
+  const s1 = rs.step1_mitre || {}, s2 = rs.step2_nist || {}, s3 = rs.step3_decision || {};
+  $("#askOut").innerHTML = `<div class="brief"><p>${esc(r.summary)}</p>
+    <h3>Reasoning — Steps 1–3</h3>
+    <p><b>Step 1 MITRE:</b> ${s1.technique ? esc(s1.technique + " " + (s1.technique_name || "") + " / " + s1.tactic + " (" + s1.confidence + ")") : esc(s1.note || "no MITRE technique matched — human review required")}</p>
+    <p><b>Step 2 NIST CSF 2.0:</b> ${esc(s2.function || "")} — ${esc(s2.category || "")}: ${esc(s2.rationale || "")}</p>
+    <p><b>Step 3 Decision:</b> priority ${esc(s3.priority || "")}, owner ${esc(s3.owner || "")}, approval required: ${s3.approval_required ? "yes" : "no"}, success: ${esc(s3.success_criteria || "")}</p>
+    <ul>${r.actions.map(a => `<li>${esc(a)}</li>`).join("")}</ul><p><b>Risks:</b></p><ul>${r.risks.map(a => `<li>${esc(a)}</li>`).join("")}</ul></div>`; return false; }
 async function draft(e) { e.preventDefault(); const f = new FormData(e.target);
   const r = await api("/api/draft", "POST", {kind: f.get("kind"), topic: f.get("topic"), backlog_id: f.get("bid") ? +f.get("bid") : null});
   $("#draftOut").innerHTML = `<pre>${esc(r.document)}</pre>`; return false; }
+async function refreshThreatIntel() { try { const r = await api("/api/threat-intel/refresh", "POST", {}); alert("Threat intel refresh: " + r.status + " — " + r.sources.map(s => s.source + ": " + s.status).join(", ")); } catch (err) { alert(err.message); } await load(); }
+async function addMitigation(tactic) { try { const r = await api("/api/mitre/mitigations/" + encodeURIComponent(tactic) + "/create-backlog", "POST", {}); alert("Added to backlog: " + r.title + " (RICE " + r.rice + ")"); } catch (err) { alert(err.message); } await load(); }
 nav(); load();
