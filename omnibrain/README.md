@@ -14,7 +14,7 @@ branding is used.
 
 Requirements: Python 3 only — standard library only
 (`http.server`, `sqlite3`, `json`, `urllib`). No npm, no pip packages,
-no external services, unless you choose Postgres below.
+no external services, unless you choose Turso or Postgres below.
 
 ```bash
 cd omnibrain
@@ -31,18 +31,27 @@ Data is saved locally to `omnibrain.db` (SQLite, git-ignored). Edits in
 the UI persist across restarts. The SOC demo in the parent repo is
 different: it saves nothing.
 
-## Stateful hosting: Neon Postgres (optional, Render)
+## Stateful hosting: Turso (optional, Render — the chosen route)
 
 Local SQLite is fine locally, but on Render Free the filesystem is
 ephemeral and SQLite edits are lost on spin-down/redeploy. For a
-Render deploy, set `DATABASE_URL` to a Neon pooled connection string
-and the app uses Neon Postgres instead — same handlers, same seed,
-data survives spin-down. See `NEON.md` for the exact dashboard steps
-and the spin-down proof test. Locally, `DATABASE_URL` unset still
-means SQLite and no install; with a postgres `DATABASE_URL` set, the
-only extra install is `pip install -r requirements.txt`
-(`psycopg[binary]`, imported lazily, never required for SQLite).
-Never commit a real connection string; `.env` is git-ignored.
+Render deploy, set `TURSO_DATABASE_URL` (libsql:// form) and
+`TURSO_AUTH_TOKEN` and the app uses Turso remote instead — same
+handlers, same seed, data survives spin-down. See `TURSO.md` for
+the exact dashboard steps and the spin-down proof test. Turso wins
+over Postgres if both are set; if the Turso URL is set without a
+token, startup fails fast rather than silently reseeding.
+Locally, with both Turso variables unset, the app still means
+SQLite and no install; with Turso set, the only extra install is
+`pip install -r requirements.txt` (`libsql`, imported lazily,
+never required for SQLite). Never commit a real URL or token;
+`.env` is git-ignored.
+
+Postgres fallback (not the chosen route): with a postgres
+`DATABASE_URL` set and no Turso variables, the app uses Postgres
+instead (see `NEON.md`; Neon itself was ruled out because the
+user's free projects are used up, but the adapter works for any
+postgres:// provider). `psycopg[binary]` is likewise lazy.
 
 ## What is inside
 
@@ -153,17 +162,17 @@ you control and wire it into `ask_answer` — the offline, rule-based
 path remains the default and the app runs fully without it. No key
 is read from the app by default.
 
-## Render prep (review, not deployed; Neon now the stateful option)
+## Render prep (review, not deployed; Turso now the stateful option)
 
 See `RENDER.md` and the repo-root `render.yaml`. Locally the server
 binds `127.0.0.1` by default; Render needs `HOST=0.0.0.0`
 (`HOST=0.0.0.0 python3 server.py`, Render injects `PORT`).
 Free tier works for a demo URL but its filesystem is ephemeral, so
 SQLite edits are lost on spin-down/redeploy and the app reseeds.
-With `DATABASE_URL` set to Neon (see `NEON.md`), edits survive
+With Turso set (see `TURSO.md`), edits survive
 spin-down/redeploy; only the first-visit wake delay after ~15
-minutes idle remains. Without `DATABASE_URL`, Render Free still
-reseeds — that is the old behaviour, not a bug.
+minutes idle remains. Without Turso (or Postgres) set, Render Free
+still reseeds — that is the old behaviour, not a bug.
 A Render URL is public by default and this app has no login —
 local-only is the private mode, not the private GitHub repo.
 `OPENAI_API_KEY` is an optional, unset-by-default placeholder in
