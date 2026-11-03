@@ -1,0 +1,4 @@
+# Only needed when DATABASE_URL points at Postgres (Neon / Render).
+# Local SQLite runs need nothing installed: psycopg is imported lazily
+# in server.py, only on the Postgres path.
+psycopg[binary]
