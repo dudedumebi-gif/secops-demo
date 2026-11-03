@@ -46,7 +46,7 @@ cd soc-demo
 python3 -m http.server
 ```
 
-**OmniBrain — server app, saves to local SQLite:**
+**OmniBrain — server app, saves to local SQLite (Neon Postgres on Render):**
 
 ```bash
 cd omnibrain
@@ -63,15 +63,18 @@ rule-based by default; a real LLM endpoint is optional, never required.
 
 ## Render (review, not deployed)
 
-See `render.yaml` at the repo root and `omnibrain/RENDER.md`.
+See `render.yaml` at the repo root and `omnibrain/RENDER.md` +
+`omnibrain/NEON.md`.
 Render Free works for a demo URL for both parts (OmniBrain web
-service + soc-demo static site), but Free SQLite is ephemeral:
-OmniBrain edits are lost on spin-down/redeploy and the app
-reseeds. A Render URL is public by default with no login in this
-app — local-only remains the private mode, even though the GitHub
-repo is private. Paid Starter + persistent disk, or a Postgres
-migration, is what would make the database durable; neither is
-in this change.
+service + soc-demo static site). With `DATABASE_URL` set to a Neon
+Postgres project, OmniBrain edits survive spin-down/redeploy; only
+the first-visit wake delay after ~15 minutes idle remains. Without
+`DATABASE_URL`, Free SQLite is ephemeral and the app reseeds. A
+Render URL is public by default with no login in this app —
+local-only remains the private mode, even though the GitHub repo
+is private. Paid Starter + persistent disk is the paid alternative;
+live Neon verification is still pending the user's own Neon project
+(see `NEON.md`).
 
 ## External threat context (free public feeds)
 
