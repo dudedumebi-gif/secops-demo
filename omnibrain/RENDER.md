@@ -65,9 +65,9 @@ for any postgres:// provider (see `NEON.md`).
    `TURSO_AUTH_TOKEN` (see `TURSO.md`, steps 1–2) for durable
    state — Turso wins over Postgres if both are set, so leave
    `DATABASE_URL` empty unless deliberately switching providers —
-   and add `OPENAI_API_KEY` only if you later wire the LLM hook;
-   leave it unset for the offline demo. Never commit a key, a
-   token, or a connection string.
+   and add `OPENAI_API_KEY` to enable the gpt-4o-mini layer (see
+   `LLM.md`); leave it unset for the offline, rule-based demo.
+   Never commit a key, a token, or a connection string.
 5. Deploy. The URL will be name-dependent, typically
    `https://omnibrain.onrender.com` if that name is free — Render
    will show the exact URL after deploy. The SOC demo static site
