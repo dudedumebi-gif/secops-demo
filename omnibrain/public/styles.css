@@ -26,3 +26,12 @@ pre{white-space:pre-wrap;background:#fff;border:1px solid var(--line);padding:12
 form{background:#fff;border:1px solid var(--line);padding:12px;border-radius:8px;margin:12px 0}
 
 .mitigation-note{font-size:13px;color:var(--muted)}
+.status-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#067647;margin-right:6px;vertical-align:middle;animation:pulse 1.6s infinite}
+.status-dot.off{background:#c11119;animation:none}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(6,118,71,.45)}70%{box-shadow:0 0 0 7px rgba(6,118,71,0)}100%{box-shadow:0 0 0 0 rgba(6,118,71,0)}}
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--red);border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.busy{color:var(--muted)}
+.error{color:#c11119;font-weight:700}
+.muted{color:var(--muted);font-size:13px}
+button:disabled{opacity:.55;cursor:wait}
