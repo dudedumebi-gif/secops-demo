@@ -55,9 +55,11 @@ postgres:// provider). `psycopg[binary]` is likewise lazy.
 
 ## What is inside
 
-- `server.py` — HTTP server + JSON API + SQLite store + offline,
-  rule-based assistant (keyword matching, RICE-grounded prioritisation,
-  template drafts). It never calls an external service.
+- `server.py` — HTTP server + JSON API + SQLite store + rule-based
+  assistant (keyword matching, RICE-grounded prioritisation,
+  template drafts) that stays authoritative; with `OPENAI_API_KEY`
+  set it adds a gpt-4o-mini natural-language layer on top (see
+  `LLM.md`). Without the key it calls no external service.
 - `public/index.html`, `public/app.js`, `public/styles.css` — vanilla
   JavaScript frontend, no build step. Tabs: Mission Control, Backlog,
   Detections, Telemetry, SOAR, Roadmap, Launches, MITRE, Ask OmniBrain.
@@ -118,10 +120,12 @@ must be Critical/High/Medium/Low and `mttr_mins` must be > 0, otherwise
 HTTP 400. Logging one moves overall MTTR and its threshold status
 immediately. `GET /api/incidents` lists the log.
 
-The assistant remains offline and rule-based for now — Ask / Triage /
-Draft are grounded in the live database and call no external service.
-Online LLM support, live endpoints, and auto-refresh are separate
-future work, not implemented here.
+The assistant is rule-based by default — Ask / Triage / Draft are
+grounded in the live database; with `OPENAI_API_KEY` set, a
+gpt-4o-mini layer (see `LLM.md`) rephrases/drafts from the
+rule-based Steps 1–3 result and real rows, with silent fallback to
+rule-based when the key is unset or the call fails. Auto-refresh
+remains manual (refresh-brief).
 
 ## Key behaviours to try
 
@@ -151,16 +155,22 @@ future work, not implemented here.
 - `POST /api/roadmap`, `POST /api/decisions`, `POST /api/launches`,
   `POST /api/launches/{id}/checks/{index}/toggle`
 - `POST /api/ask {question}`, `POST /api/draft {kind, backlog_id?, topic?}`,
-  `POST /api/refresh-brief`
+  `POST /api/refresh-brief` — ask/triage/draft responses include
+  `llm_answer`, `llm_used`, `llm_model`, `llm_error` (see `LLM.md`)
+- `GET /api/llm-status` — `{configured, model: "gpt-4o-mini"}`; `GET
+  /api/dashboard` includes `llm_available`
 - `GET /api/mitre` — MITRE heat map derived from live detections
 - `GET /api/incidents`, `POST /api/incidents {title, severity, mttr_mins}` — incident log that drives MTTR
 
-## Optional real LLM (never required)
+## Optional LLM layer — gpt-4o-mini (wired, see LLM.md)
 
-If you later want a real LLM, set `OMNIBRAIN_LLM_URL` to an endpoint
-you control and wire it into `ask_answer` — the offline, rule-based
-path remains the default and the app runs fully without it. No key
-is read from the app by default.
+Set `OPENAI_API_KEY` (Render dashboard env var, `sync: false` in
+`render.yaml`) to enable one gpt-4o-mini call per ask/triage/draft,
+grounded only in the rule-based Steps 1–3 result and real DB rows.
+Without the key the app is fully offline and rule-based; any LLM
+failure falls back silently to the rule-based response. No key is
+read from the app by default, and `OMNIBRAIN_LLM_URL` is an old
+placeholder that is not read.
 
 ## Render prep (review, not deployed; Turso now the stateful option)
 
