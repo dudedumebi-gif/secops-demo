@@ -30,11 +30,17 @@ so a local SQLite run needs nothing installed. requirements.txt lists
 both because Render installs it for all paths.
 
 The AI assistant (Ask / Triage / Draft) is rule-based and runs offline
-over the live workspace. All data is simulated for demonstration.
-Set OMNIBRAIN_LLM_URL only if you later want to point Ask at a real
-LLM endpoint — it is never required, and the offline path is the default.
-Never print TURSO_DATABASE_URL or TURSO_AUTH_TOKEN: the token is a secret.
-Never print DATABASE_URL: it contains a password.
+over the live workspace; the rule-based Steps 1-3 result is always
+computed first and stays authoritative. If OPENAI_API_KEY is set, one
+optional Chat Completions call (gpt-4o-mini, stdlib urllib only, 15s
+timeout, max 600 tokens) adds a natural-language layer on top, grounded
+only in the rule-based result and real DB rows — its text is returned
+in llm_answer alongside the unchanged rule-based fields, and any
+failure falls back silently to the rule-based response. Without the
+key the app is fully offline. All data is simulated for demonstration.
+OMNIBRAIN_LLM_URL is an old placeholder and is not read.
+Never print TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, DATABASE_URL or
+OPENAI_API_KEY: they are secrets.
 """
 import json
 import os
@@ -59,6 +65,17 @@ USE_TURSO = bool(TURSO_DATABASE_URL)
 # not set. Any other value (including unset) keeps local SQLite behaviour.
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 USE_POSTGRES = (not USE_TURSO) and DATABASE_URL.startswith(("postgres://", "postgresql://"))
+
+# ---------------------------------------------------------------- optional LLM layer (gpt-4o-mini)
+# Read from the environment only (Render dashboard env var, sync: false
+# in render.yaml). The Muse-side OpenAI connection cannot be used here;
+# no key value is ever stored in this repo, in logs, or in chat.
+LLM_MODEL = "gpt-4o-mini"
+LLM_URL = "https://api.openai.com/v1/chat/completions"
+LLM_TIMEOUT_S = 15
+LLM_MAX_TOKENS = 600
+LLM_TEMPERATURE = 0.2
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 
 
 # ---------------------------------------------------------------- DB adapter
@@ -656,6 +673,115 @@ def reason_about(text, triage_rec=None):
           "launch_gate": launch_gate, "success_criteria": success}
     return {"step1_mitre": s1, "step2_nist": s2, "step3_decision": s3}
 
+
+# ---------------------------------------------------------------- optional LLM layer (gpt-4o-mini)
+# The rule-based engine above stays authoritative: the LLM is a
+# natural-language layer on top of it, never a replacement for
+# grounding. One Chat Completions call per ask/triage/draft, stdlib
+# urllib only, no new dependency. No key -> no call, rule-based only.
+# Any failure (timeout, network, non-200, bad JSON) -> silent fallback
+# to the exact rule-based response with llm_used=false. Never retry,
+# never 500 because of the LLM, never expose the key or raw API body.
+def llm_status():
+    return {"configured": bool(OPENAI_API_KEY), "model": LLM_MODEL}
+
+
+def _workspace_context(conn):
+    """Compact grounded context: real DB rows only, capped. Never a
+    whole-table dump."""
+    k = kpis(conn)
+    return {
+        "kpis": {"fidelity": k["fidelity"], "coverage": k["coverage"],
+                 "mttr_mins": k["mttr_mins"], "open_backlog": k["open_backlog"]},
+        "backlog_top5": [{"id": r["id"], "title": r["title"], "team": r["team"],
+                          "priority": r["priority"], "status": r["status"], "rice": r["rice"]}
+                         for r in rows(conn, "SELECT * FROM backlog ORDER BY rice DESC LIMIT 5")],
+        "detections": [{"name": r["name"], "stage": r["stage"], "fidelity": r["fidelity"],
+                        "fp_rate": r["fp_rate"], "mitre": r["mitre"]}
+                       for r in rows(conn, "SELECT * FROM detections")],
+        "telemetry": [{"name": r["name"], "status": r["status"], "coverage": r["coverage"]}
+                      for r in rows(conn, "SELECT * FROM telemetry")],
+        "playbooks": [{"name": r["name"], "risk": r["risk_level"], "status": r["status"]}
+                      for r in rows(conn, "SELECT * FROM playbooks")],
+        "roadmap": [{"title": r["title"], "quarter": r["quarter"], "status": r["status"]}
+                    for r in rows(conn, "SELECT * FROM roadmap")],
+    }
+
+
+def _llm_chat(messages):
+    """One Chat Completions call. Returns the model's text, or None on
+    any failure. The key travels only in this request's header."""
+    import urllib.request
+    payload = json.dumps({"model": LLM_MODEL, "messages": messages,
+                          "temperature": LLM_TEMPERATURE,
+                          "max_tokens": LLM_MAX_TOKENS}).encode()
+    req = urllib.request.Request(
+        LLM_URL, data=payload,
+        headers={"Content-Type": "application/json",
+                 "Authorization": "Bearer " + OPENAI_API_KEY},
+        method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=LLM_TIMEOUT_S) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception:
+        return None
+    try:
+        text = data["choices"][0]["message"]["content"]
+    except Exception:
+        return None
+    return text.strip() if isinstance(text, str) and text.strip() else None
+
+
+def llm_enhance(conn, kind, user_text, reasoning, rule_summary):
+    """Returns (text_or_None, used_bool, error_or_None). Never raises."""
+    if not OPENAI_API_KEY:
+        return None, False, None
+    s1 = reasoning.get("step1_mitre", {}) if isinstance(reasoning, dict) else {}
+    system = (
+        "You are the natural-language layer for OmniBrain, a SecOps "
+        "product-management demo. All workspace data is simulated for "
+        "demonstration, not live employer telemetry. "
+        "Answer using ONLY the facts in the supplied rule-based reasoning "
+        "and workspace context. Cite real backlog/detection/telemetry "
+        "titles and IDs from the context. Keep the Steps 1-3 structure: "
+        "restate Step 1 (MITRE technique/tactic), Step 2 (NIST CSF 2.0 "
+        "function), Step 3 (priority, owner, approval gate). "
+        "Never invent MITRE techniques, controls, detections, or "
+        "workspace facts. If Step 1 technique is null, say exactly "
+        "'no MITRE technique matched — human review required' and do not "
+        "guess a technique. Be concise."
+    )
+    try:
+        context = _workspace_context(conn)
+    except Exception:
+        # A DB/context error must never turn an ask/triage/draft into a
+        # 500: fall back to the rule-based answer, same as an LLM failure.
+        return None, False, "openai_unavailable"
+    user = json.dumps({"kind": kind, "request": user_text,
+                       "rule_based_reasoning_steps_1_to_3": reasoning,
+                       "rule_based_summary": rule_summary,
+                       "workspace_context": context}, default=str)
+    text = _llm_chat([{"role": "system", "content": system},
+                      {"role": "user", "content": user}])
+    if text is None:
+        return None, False, "openai_unavailable"
+    return text, True, None
+
+
+def _attach_llm(result, conn, kind, user_text, rule_summary):
+    """Adds llm_answer / llm_used / llm_model / llm_error to a
+    rule-based result without touching its rule-based fields."""
+    reasoning = result.get("reasoning") or {
+        "step1_mitre": result.get("step1_mitre", {}),
+        "step2_nist": result.get("step2_nist", {}),
+        "step3_decision": result.get("step3_decision", {})}
+    text, used, err = llm_enhance(conn, kind, user_text, reasoning, rule_summary)
+    result["llm_answer"] = text
+    result["llm_used"] = used
+    result["llm_model"] = LLM_MODEL if used else None
+    result["llm_error"] = err
+    return result
+
 # ---------------------------------------------------------------- free public threat intel (external context only)
 THREAT_INTEL_NOTE = "public external threat context, not internal telemetry"
 MITRE_STIX_URL = "https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json"
@@ -896,6 +1022,8 @@ class Handler(BaseHTTPRequestHandler):
             out = threat_intel_summary(conn)
             conn.close()
             return self.send_json(200, out)
+        if parsed.path == "/api/llm-status":
+            return self.send_json(200, llm_status())
         if parsed.path == "/api/mitre":
             conn = db()
             out = mitre_heatmap(conn)
@@ -909,6 +1037,8 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/dashboard":
             conn = db()
             out = {"kpis": kpis(conn), "brief": make_brief(conn), "mitre_heatmap": mitre_heatmap(conn),
+                   "llm_available": bool(OPENAI_API_KEY),
+                   "llm_model": LLM_MODEL if OPENAI_API_KEY else None,
                    "threat_intel": threat_intel_summary(conn),
                    "incidents": rows(conn, "SELECT * FROM incidents ORDER BY id"),
                    "backlog": rows(conn, "SELECT * FROM backlog ORDER BY rice DESC"),
@@ -1013,6 +1143,10 @@ class Handler(BaseHTTPRequestHandler):
             if not body.get("text"):
                 return self.send_json(400, {"error": "missing text"})
             rec = triage_recommendation(body["text"])
+            _attach_llm(rec, conn, "triage", body["text"],
+                        {"title": rec["title"], "type": rec["type"], "team": rec["team"],
+                         "rice": rec["rice"], "priority": rec["priority"],
+                         "acceptance": rec["acceptance"], "risks": rec["risks"]})
             if body.get("save"):
                 cur = conn.execute(
                     "INSERT INTO backlog (title, description, type, team, requester, priority, status, reach, impact, confidence, effort, rice, value_statement, acceptance) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -1024,11 +1158,16 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["ask"] and self.command == "POST":
             if not body.get("question"):
                 return self.send_json(400, {"error": "missing question"})
-            return self.send_json(200, ask_answer(conn, body["question"]))
+            ans = ask_answer(conn, body["question"])
+            _attach_llm(ans, conn, "ask", body["question"],
+                        {"summary": ans["summary"], "actions": ans["actions"]})
+            return self.send_json(200, ans)
         if parts == ["draft"] and self.command == "POST":
             doc = draft_doc(conn, body.get("kind", ""), body.get("backlog_id"), body.get("topic", ""))
             if doc is None:
                 return self.send_json(400, {"error": "kind must be prd|runbook|launch-plan, and backlog_id (if given) must exist"})
+            _attach_llm(doc, conn, "draft", body.get("topic") or doc["title"],
+                        {"document": doc["document"]})
             return self.send_json(200, doc)
         if parts == ["refresh-brief"] and self.command == "POST":
             brief = make_brief(conn)
