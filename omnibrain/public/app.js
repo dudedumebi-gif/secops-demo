@@ -3,6 +3,18 @@ let D = null;
 let LLM = {configured: false, model: "gpt-4o-mini"};
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+// Status pills — pure presentation, no behaviour change.
+const pill = (t, c) => `<span class="pill ${c || "st-intake"}">${esc(t)}</span>`;
+const CLS = {
+  prio: {P0: "pill-p0", P1: "pill-p1", P2: "pill-p2", P3: "pill-p3"},
+  bstatus: {"in_progress": "st-prog", done: "st-done", intake: "st-intake", prioritized: "st-prio", triaged: "st-tri"},
+  tel: {Live: "tel-live", Blocked: "tel-blocked", Onboarding: "tel-onb", "Parser Fix": "tel-fix", Queued: "tel-q"},
+  risk: {Critical: "rk-crit", High: "rk-high", Medium: "rk-med", Low: "rk-low"},
+  stage: {Production: "sg-prod", Deployment: "sg-dep", Testing: "sg-test", Tuning: "sg-tune", Development: "sg-dev", Idea: "sg-idea"},
+  road: {Committed: "st-done", Planned: "st-prog", Exploring: "st-intake"},
+  soar: {Production: "st-done", Approved: "st-done", "Needs Tuning": "st-prog", "In Review": "st-prio"},
+  mttr: {pass: "st-done", breach: "rk-crit", no_data: "st-intake"},
+};
 // Last rendered Ask/Triage/Draft outputs. render() rebuilds every view's
 // innerHTML on tab switches and after load(), which used to wipe a just
 // shown answer — re-injecting these keeps results visible across tabs.
@@ -53,7 +65,7 @@ function render() {
     <p>Seed incident rows are simulated samples. Logging a real incident below moves MTTR and its pass/breach status.</p>
     <table><tr><th>Severity</th><th>Mean</th><th>Median</th><th>Count</th><th>Threshold</th><th>Status</th></tr>
     ${Object.entries(mt).map(([sev, v]) => rowHtml([esc(sev), v.mean == null ? "—" : v.mean + "m", v.median == null ? "—" : v.median + "m", v.count, v.threshold_mins + "m",
-      `<span class="${v.status === "breach" ? "blocked" : v.status === "pass" ? "ready" : ""}">${v.status}</span>`])).join("")}</table>
+      `<span class="pill ${CLS.mttr[v.status] || "st-intake"}">${v.status}</span>`])).join("")}</table>
     <form onsubmit="return logIncident(event)"><input name="title" placeholder="Incident title" required>
     <select name="severity"><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select>
     <input name="mttr_mins" type="number" step="any" placeholder="Response time (minutes)" required><button class="primary">Log incident response time</button></form>
@@ -76,21 +88,21 @@ function render() {
     <form onsubmit="return triage(event)"><input name="text" placeholder="Paste a stakeholder request to triage…" style="width:60%" required>
     <label><input type="checkbox" name="save"> Save to backlog</label><button class="primary">Triage</button></form><div id="triageOut"></div>
     <table><tr><th>Title</th><th>Team</th><th>P</th><th>Status</th><th>RICE</th><th>Actions</th></tr>
-    ${D.backlog.map(b => rowHtml([esc(b.title), esc(b.team), esc(b.priority), esc(b.status), b.rice,
-      `<button onclick="setBacklog(${b.id},'in_progress')">Start</button> <button onclick="setBacklog(${b.id},'done')">Done</button> <button onclick="delBacklog(${b.id})">Delete</button>`])).join("")}</table>`;
+    ${D.backlog.map(b => rowHtml([esc(b.title), esc(b.team), pill(b.priority, CLS.prio[b.priority]), pill(b.status, CLS.bstatus[b.status]), `<b>${b.rice}</b>`,
+      `<button onclick="setBacklog(${b.id},'in_progress')">Start</button> <button onclick="setBacklog(${b.id},'done')">Done</button> <button class="danger" onclick="delBacklog(${b.id})">Delete</button>`])).join("")}</table>`;
   $("#view-detections").innerHTML = `<h2>Detections</h2><table><tr><th>Name</th><th>Stage</th><th>Fidelity</th><th>FP %</th><th>MITRE</th><th>Move</th></tr>
-    ${D.detections.map(d => rowHtml([esc(d.name), esc(d.stage), d.fidelity + "%", d.fp_rate, esc(d.mitre),
+    ${D.detections.map(d => rowHtml([`<b>${esc(d.name)}</b>`, pill(d.stage, CLS.stage[d.stage]), d.fidelity + "%", d.fp_rate, esc(d.mitre),
       `<select onchange="setDet(${d.id},this.value)"><option>${esc(d.stage)}</option>${["Idea","Development","Testing","Tuning","Deployment","Production"].filter(s=>s!==d.stage).map(s=>`<option>${s}</option>`).join("")}</select>`])).join("")}</table>
     <form onsubmit="return addDet(event)"><input name="name" placeholder="Detection name" required><button class="primary">Add detection</button></form>`;
   $("#view-telemetry").innerHTML = `<h2>Telemetry</h2><table><tr><th>Source</th><th>Vendor</th><th>Status</th><th>Coverage</th><th>Actions</th></tr>
-    ${D.telemetry.map(t => rowHtml([esc(t.name), esc(t.vendor), esc(t.status), t.coverage + "%",
+    ${D.telemetry.map(t => rowHtml([`<b>${esc(t.name)}</b>`, esc(t.vendor), pill(t.status, CLS.tel[t.status]), `<b>${t.coverage}%</b>`,
       `<select onchange="setTel(${t.id},this.value)"><option>${esc(t.status)}</option>${["Live","Onboarding","Parser Fix","Queued","Blocked"].filter(s=>s!==t.status).map(s=>`<option>${s}</option>`).join("")}</select>`])).join("")}</table>`;
   $("#view-soar").innerHTML = `<h2>SOAR Playbooks</h2><p>High / Critical playbooks require a named approver. Low / Medium may auto-approve.</p>
     <table><tr><th>Playbook</th><th>Risk</th><th>Status</th><th>Success</th><th>Runs</th><th>Approve</th></tr>
-    ${D.playbooks.map(p => rowHtml([esc(p.name), esc(p.risk_level), esc(p.status), p.success_rate + "%", p.runs,
+    ${D.playbooks.map(p => rowHtml([`<b>${esc(p.name)}</b>`, pill(p.risk_level, CLS.risk[p.risk_level]), pill(p.status, CLS.soar[p.status]), p.success_rate + "%", p.runs,
       `<input id="ap-${p.id}" placeholder="Approver"><button onclick="approvePb(${p.id})">Approve</button>`])).join("")}</table>`;
   $("#view-roadmap").innerHTML = `<h2>Roadmap</h2><table><tr><th>Item</th><th>Quarter</th><th>Status</th><th>Theme</th><th>Outcome</th></tr>
-    ${D.roadmap.map(r => rowHtml([esc(r.title), esc(r.quarter), esc(r.status), esc(r.theme), esc(r.outcome)])).join("")}</table>
+    ${D.roadmap.map(r => rowHtml([`<b>${esc(r.title)}</b>`, esc(r.quarter), pill(r.status, CLS.road[r.status]), esc(r.theme), esc(r.outcome)])).join("")}</table>
     <form onsubmit="return addRoad(event)"><input name="title" placeholder="Roadmap item" required><input name="quarter" placeholder="Now/Next/Later"><button class="primary">Add</button></form>`;
   $("#view-launches").innerHTML = `<h2>Launches</h2>${D.launches.map(l => `<div class="card"><h3>${esc(l.name)}</h3>
     <p>Target ${esc(l.target_date)} — <span class="${l.launch_status === 'BLOCKED' ? 'blocked' : 'ready'}">${l.launch_status}</span> until all checks pass.</p>
