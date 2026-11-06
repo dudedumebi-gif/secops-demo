@@ -1,5 +1,6 @@
 const TABS = [["mission","Mission Control"],["backlog","Backlog"],["detections","Detections"],["telemetry","Telemetry"],["soar","SOAR"],["roadmap","Roadmap"],["launches","Launches"],["mitre","MITRE"],["ask","Ask OmniBrain"]];
 let D = null;
+let LLM = {configured: false, model: "gpt-4o-mini"};
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 async function api(path, method, body) {
@@ -97,12 +98,12 @@ function render() {
       <p>${esc(m.suggested_backlog_title)}</p>
       <button class="primary" onclick="addMitigation('${esc(m.tactic)}')">Add to backlog</button></div>`).join("") || "<p>No mitigations.</p>"}</div>
     <p>Lowest coverage first: ${(mh2.lowest_coverage_tactics || []).join(", ")}</p>`;
-  $("#view-ask").innerHTML = `<h2>Ask OmniBrain</h2><p>Offline, grounded in the live workspace above. No external service is called.</p>
+  $("#view-ask").innerHTML = `<h2>Ask OmniBrain</h2><p>${LLM.configured ? "Online — gpt-4o-mini. The LLM layer is grounded in the rule-based Steps 1–3 result and real workspace rows; it never invents techniques or facts." : "Offline — rule-based. Grounded in the live workspace above. No external service is called."}</p>
     <form onsubmit="return ask(event)"><input name="q" placeholder="e.g. What should we prioritise this week?" style="width:60%" required><button class="primary">Ask</button></form><div id="askOut"></div>
     <h3>Draft a document</h3><form onsubmit="return draft(event)"><select name="kind"><option value="prd">PRD</option><option value="runbook">Runbook</option><option value="launch-plan">Launch plan</option></select>
     <input name="topic" placeholder="Topic, or leave blank and pick a backlog ID"><input name="bid" type="number" placeholder="Backlog ID (optional)"><button class="primary">Draft</button></form><div id="draftOut"></div>`;
 }
-async function load() { D = await api("/api/dashboard"); render(); }
+async function load() { D = await api("/api/dashboard"); try { LLM = await api("/api/llm-status"); } catch (e) { LLM = {configured: false, model: "gpt-4o-mini"}; } render(); }
 async function refreshBrief() { const r = await api("/api/refresh-brief", "POST", {}); alert(r.brief); await load(); }
 async function logIncident(e) { e.preventDefault(); const f = new FormData(e.target);
   try { await api("/api/incidents", "POST", {title: f.get("title"), severity: f.get("severity"), mttr_mins: +f.get("mttr_mins")}); }
@@ -114,7 +115,7 @@ async function setBacklog(id, status) { await api("/api/backlog/" + id, "PATCH",
 async function delBacklog(id) { if (confirm("Delete this backlog item?")) { await api("/api/backlog/" + id, "DELETE"); await load(); } }
 async function triage(e) { e.preventDefault(); const f = new FormData(e.target);
   const r = await api("/api/triage", "POST", {text: f.get("text"), save: !!f.get("save")});
-  $("#triageOut").innerHTML = `<pre>${esc(JSON.stringify(r, null, 2))}</pre>`; await load(); return false; }
+  $("#triageOut").innerHTML = `<p><small>Triage source: ${r.llm_used ? "LLM — gpt-4o-mini (grounded in Steps 1–3 + live rows)" : "rule-based (LLM not configured or unavailable)"}</small></p><pre>${esc(JSON.stringify(r, null, 2))}</pre>`; await load(); return false; }
 async function addDet(e) { e.preventDefault(); await api("/api/detections", "POST", {name: new FormData(e.target).get("name")}); await load(); return false; }
 async function setDet(id, stage) { await api("/api/detections/" + id, "PATCH", {stage}); await load(); }
 async function setTel(id, status) { await api("/api/telemetry/" + id, "PATCH", {status}); await load(); }
@@ -124,7 +125,8 @@ async function toggleCheck(id, idx) { await api(`/api/launches/${id}/checks/${id
 async function ask(e) { e.preventDefault(); const r = await api("/api/ask", "POST", {question: new FormData(e.target).get("q")});
   const rs = r.reasoning || r;
   const s1 = rs.step1_mitre || {}, s2 = rs.step2_nist || {}, s3 = rs.step3_decision || {};
-  $("#askOut").innerHTML = `<div class="brief"><p>${esc(r.summary)}</p>
+  $("#askOut").innerHTML = `<div class="brief"><p><small>Answer source: ${r.llm_used ? "LLM — gpt-4o-mini (grounded in Steps 1–3 + live rows)" : "rule-based (LLM not configured or unavailable)"}</small></p><p>${esc(r.summary)}</p>
+    ${r.llm_answer ? `<h3>LLM answer</h3><pre>${esc(r.llm_answer)}</pre>` : ""}
     <h3>Reasoning — Steps 1–3</h3>
     <p><b>Step 1 MITRE:</b> ${s1.technique ? esc(s1.technique + " " + (s1.technique_name || "") + " / " + s1.tactic + " (" + s1.confidence + ")") : esc(s1.note || "no MITRE technique matched — human review required")}</p>
     <p><b>Step 2 NIST CSF 2.0:</b> ${esc(s2.function || "")} — ${esc(s2.category || "")}: ${esc(s2.rationale || "")}</p>
@@ -132,7 +134,7 @@ async function ask(e) { e.preventDefault(); const r = await api("/api/ask", "POS
     <ul>${r.actions.map(a => `<li>${esc(a)}</li>`).join("")}</ul><p><b>Risks:</b></p><ul>${r.risks.map(a => `<li>${esc(a)}</li>`).join("")}</ul></div>`; return false; }
 async function draft(e) { e.preventDefault(); const f = new FormData(e.target);
   const r = await api("/api/draft", "POST", {kind: f.get("kind"), topic: f.get("topic"), backlog_id: f.get("bid") ? +f.get("bid") : null});
-  $("#draftOut").innerHTML = `<pre>${esc(r.document)}</pre>`; return false; }
+  $("#draftOut").innerHTML = `<p><small>Draft source: ${r.llm_used ? "LLM — gpt-4o-mini" : "rule-based (LLM not configured or unavailable)"}</small></p><pre>${esc(r.document)}</pre>` + (r.llm_answer ? `<h3>LLM draft — gpt-4o-mini</h3><pre>${esc(r.llm_answer)}</pre>` : ""); return false; }
 async function refreshThreatIntel() { try { const r = await api("/api/threat-intel/refresh", "POST", {}); alert("Threat intel refresh: " + r.status + " — " + r.sources.map(s => s.source + ": " + s.status).join(", ")); } catch (err) { alert(err.message); } await load(); }
 async function addMitigation(tactic) { try { const r = await api("/api/mitre/mitigations/" + encodeURIComponent(tactic) + "/create-backlog", "POST", {}); alert("Added to backlog: " + r.title + " (RICE " + r.rice + ")"); } catch (err) { alert(err.message); } await load(); }
 nav(); load();
