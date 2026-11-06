@@ -76,6 +76,10 @@ LLM_TIMEOUT_S = 15
 LLM_MAX_TOKENS = 600
 LLM_TEMPERATURE = 0.2
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
+# Last LLM failure (None = no failure yet, or last call succeeded).
+# Exposed via /api/llm-status so the Ask tab can say *why* it is offline
+# instead of just showing a red dot.
+_LAST_LLM_ERROR = None
 
 
 # ---------------------------------------------------------------- DB adapter
@@ -683,7 +687,8 @@ def reason_about(text, triage_rec=None):
 # to the exact rule-based response with llm_used=false. Never retry,
 # never 500 because of the LLM, never expose the key or raw API body.
 def llm_status():
-    return {"configured": bool(OPENAI_API_KEY), "model": LLM_MODEL}
+    return {"configured": bool(OPENAI_API_KEY), "model": LLM_MODEL,
+            "last_error": _LAST_LLM_ERROR}
 
 
 def _workspace_context(conn):
@@ -771,11 +776,21 @@ def llm_enhance(conn, kind, user_text, reasoning, rule_summary):
 def _attach_llm(result, conn, kind, user_text, rule_summary):
     """Adds llm_answer / llm_used / llm_model / llm_error to a
     rule-based result without touching its rule-based fields."""
+    if result.get("off_topic"):
+        # Never spend an LLM call (or let the LLM reason) about an
+        # off-topic question such as the lunch menu.
+        result["llm_answer"] = None
+        result["llm_used"] = False
+        result["llm_model"] = None
+        result["llm_error"] = None
+        return result
     reasoning = result.get("reasoning") or {
         "step1_mitre": result.get("step1_mitre", {}),
         "step2_nist": result.get("step2_nist", {}),
         "step3_decision": result.get("step3_decision", {})}
     text, used, err = llm_enhance(conn, kind, user_text, reasoning, rule_summary)
+    global _LAST_LLM_ERROR
+    _LAST_LLM_ERROR = err
     result["llm_answer"] = text
     result["llm_used"] = used
     result["llm_model"] = LLM_MODEL if used else None
@@ -922,6 +937,29 @@ def triage_recommendation(text):
     return rec
 
 
+# Workspace-intent vocabulary, reused from the keyword rules in
+# step1_mitre / step2_nist / triage_recommendation — no new taxonomy.
+# A question is only answered with Steps 1-3 if it matches a MITRE
+# technique, carries one of these intents, or scores against real rows.
+WORKSPACE_INTENT = [
+    "priorit", "backlog", "detection", "detect", "telemetry", "playbook",
+    "soar", "roadmap", "launch", "mitre", "coverage", "fidelity", "mttr",
+    "incident", "ransomware", "phishing", "vulnerab", "cve", "approval",
+    "risk", "owner", "governance", "triage", "analyst", "alert", "rule",
+    "tuning", "tune", "noise", "false positive", "log", "edr", "siem",
+    "firewall", "dns", "entra", "okta", "aws", "cloudtrail", "guardduty",
+    "eks", "kubernetes", "threat", "intel", "brief", "kpi", "metric",
+    "automat", "onboard", "block", "isolate", "disable", "purge",
+    "containment", "contain", "respond", "rollback", "recover", "patch",
+    "mfa", "asset", "inventory", "critical", "severity", "breach",
+    "exploit", "malware", "endpoint", "identity", "access", "privilege",
+    "lateral", "exfiltrat", "collection", "discovery", "recon", "scan",
+    "c2", "command and control", "credential", "token", "powershell",
+    "lsass", "brute force", "rice", "gap", "mitigation", "training",
+    "runbook", "prd", "document", "draft",
+]
+
+
 def ask_answer(conn, question):
     toks = tokens(question)
     def score(row, fields):
@@ -935,6 +973,25 @@ def ask_answer(conn, question):
     ranked_d = sorted(dets, key=lambda r: score(r, ["name", "description", "mitre", "log_source"]), reverse=True)
     ranked_t = sorted(tel, key=lambda r: score(r, ["name", "use_case", "vendor"]), reverse=True)
     top_b = ranked_b[0] if ranked_b else None
+    # Off-topic gate: no MITRE technique, no workspace intent, and no
+    # row scores against backlog/detections/telemetry -> answer with a
+    # short notice only. No Steps 1-3, no top-RICE fallback, no risks,
+    # and no LLM call (see _attach_llm). "What should we prioritise
+    # this week?" still passes: "priorit" is workspace intent.
+    s1_gate = step1_mitre(question)
+    low_q = question.lower()
+    has_intent = any(w in low_q for w in WORKSPACE_INTENT)
+    best_row_score = max(
+        [score(top_b, ["title", "description", "type", "team"]) if top_b else 0,
+         score(ranked_d[0], ["name", "description", "mitre", "log_source"]) if ranked_d else 0,
+         score(ranked_t[0], ["name", "use_case", "vendor"]) if ranked_t else 0])
+    if s1_gate["technique"] is None and not has_intent and best_row_score == 0:
+        return {"off_topic": True,
+                "summary": "That's outside this SecOps workspace — OmniBrain only answers questions about detections, telemetry, playbooks, backlog, roadmap, launches and MITRE coverage. Try asking what to prioritise this week, or how to respond to a phishing attack.",
+                "llm_answer": None, "llm_used": False, "llm_model": None, "llm_error": None,
+                "reasoning": None, "step1_mitre": None, "step2_nist": None,
+                "step3_decision": None, "actions": [], "risks": [],
+                "referenced_titles": [], "next_steps": []}
     # Always ground in real rows: prefer keyword matches, fall back to top RICE / noisiest.
     actions = []
     if top_b and score(top_b, ["title", "description", "type", "team"]) > 0:
@@ -957,7 +1014,7 @@ def ask_answer(conn, question):
                f"MTTR {k['mttr_mins']:g}m, {k['open_backlog']} open backlog items): "
                f"prioritise signal quality before breadth — fix the noisiest detection and unblock telemetry before adding new coverage.")
     reasoning = reason_about(question)
-    return {"summary": summary, "actions": actions,
+    return {"off_topic": False, "summary": summary, "actions": actions,
             "reasoning": reasoning,
             "step1_mitre": reasoning["step1_mitre"],
             "step2_nist": reasoning["step2_nist"],
@@ -1037,6 +1094,7 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/dashboard":
             conn = db()
             out = {"kpis": kpis(conn), "brief": make_brief(conn), "mitre_heatmap": mitre_heatmap(conn),
+                   "engine": "turso" if USE_TURSO else "postgres" if USE_POSTGRES else "sqlite",
                    "llm_available": bool(OPENAI_API_KEY),
                    "llm_model": LLM_MODEL if OPENAI_API_KEY else None,
                    "threat_intel": threat_intel_summary(conn),
