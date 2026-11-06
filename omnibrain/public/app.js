@@ -3,11 +3,27 @@ let D = null;
 let LLM = {configured: false, model: "gpt-4o-mini"};
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-async function api(path, method, body) {
-  const r = await fetch(path, {method: method || "GET", headers: {"Content-Type":"application/json"}, body: body ? JSON.stringify(body) : undefined});
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
-  return j;
+// Last rendered Ask/Triage/Draft outputs. render() rebuilds every view's
+// innerHTML on tab switches and after load(), which used to wipe a just
+// shown answer — re-injecting these keeps results visible across tabs.
+let LAST = {ask: "", triage: "", draft: ""};
+const ENGINE_LABEL = {turso: "Saved to Turso (remote database).", postgres: "Saved to Postgres.", sqlite: "Saved locally to SQLite."};
+function setFooter() { const f = document.querySelector("footer"); if (!f || !D) return;
+  f.textContent = `OmniBrain — SecOps product management demo. All data is simulated for demonstration. ${ENGINE_LABEL[D.engine] || "Saved to the configured database."} Threat-intel refresh fetches public feeds only (CISA/MITRE/NVD/abuse.ch) and sends no internal data to them.`; }
+async function api(path, method, body, timeoutMs) {
+  // A hung fetch (e.g. a Render free instance waking from spin-down) used
+  // to leave the page looking dead forever: no timeout, no feedback.
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs || 30000);
+  try {
+    const r = await fetch(path, {method: method || "GET", headers: {"Content-Type":"application/json"}, body: body ? JSON.stringify(body) : undefined, signal: ctrl.signal});
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || ("HTTP " + r.status));
+    return j;
+  } catch (err) {
+    if (err.name === "AbortError") throw new Error("Request timed out after 30s — the service may be waking from spin-down; try again.");
+    throw err;
+  } finally { clearTimeout(t); }
 }
 function nav() {
   $("#tabs").innerHTML = TABS.map(([k,l]) => `<button data-tab="${k}" class="${k===state.tab?'active':''}">${l}</button>`).join("");
@@ -98,12 +114,21 @@ function render() {
       <p>${esc(m.suggested_backlog_title)}</p>
       <button class="primary" onclick="addMitigation('${esc(m.tactic)}')">Add to backlog</button></div>`).join("") || "<p>No mitigations.</p>"}</div>
     <p>Lowest coverage first: ${(mh2.lowest_coverage_tactics || []).join(", ")}</p>`;
-  $("#view-ask").innerHTML = `<h2>Ask OmniBrain</h2><p>${LLM.configured ? "Online — gpt-4o-mini. The LLM layer is grounded in the rule-based Steps 1–3 result and real workspace rows; it never invents techniques or facts." : "Offline — rule-based. Grounded in the live workspace above. No external service is called."}</p>
-    <form onsubmit="return ask(event)"><input name="q" placeholder="e.g. What should we prioritise this week?" style="width:60%" required><button class="primary">Ask</button></form><div id="askOut"></div>
+  $("#view-ask").innerHTML = `<h2>Ask OmniBrain</h2>${statusHtml()}
+    <form onsubmit="return ask(event)"><input name="q" placeholder="e.g. What should we prioritise this week?" style="width:60%" required><button class="primary">Ask</button></form><p class="muted">Grounded in Steps 1–3 + live workspace rows. Ask about detections, telemetry, playbooks, backlog, roadmap or MITRE coverage.</p><div id="askOut"></div>
     <h3>Draft a document</h3><form onsubmit="return draft(event)"><select name="kind"><option value="prd">PRD</option><option value="runbook">Runbook</option><option value="launch-plan">Launch plan</option></select>
     <input name="topic" placeholder="Topic, or leave blank and pick a backlog ID"><input name="bid" type="number" placeholder="Backlog ID (optional)"><button class="primary">Draft</button></form><div id="draftOut"></div>`;
+  // render() rebuilds the views: re-inject the last Ask/Triage/Draft
+  // outputs so an answer survives tab switches and reloads.
+  if (LAST.triage) { const t = $("#triageOut"); if (t) t.innerHTML = LAST.triage; }
+  if (LAST.ask) { const a = $("#askOut"); if (a) a.innerHTML = LAST.ask; }
+  if (LAST.draft) { const d = $("#draftOut"); if (d) d.innerHTML = LAST.draft; }
 }
-async function load() { D = await api("/api/dashboard"); try { LLM = await api("/api/llm-status"); } catch (e) { LLM = {configured: false, model: "gpt-4o-mini"}; } render(); }
+function statusHtml() {
+  if (LLM.configured) return `<p id="llmStatus" title="The LLM layer is grounded in the rule-based Steps 1–3 result and real workspace rows; it never invents techniques or facts."><span class="status-dot"></span> Online · gpt-4o-mini</p>${LLM.last_error ? `<p class="error">LLM configured but the last call failed (${esc(LLM.last_error)}) — check the key and redeploy.</p>` : ""}`;
+  return `<p id="llmStatus"><span class="status-dot off"></span> Offline · rule-based</p><p class="muted">No OPENAI_API_KEY is set on this running service. Set it on the omnibrain service in Render (Environment tab) and redeploy — a key saved without a redeploy, or pasted into Muse's Secure Vault, does not reach this instance.</p>`;
+}
+async function load() { D = await api("/api/dashboard"); try { LLM = await api("/api/llm-status"); } catch (e) { LLM = {configured: false, model: "gpt-4o-mini"}; } render(); setFooter(); }
 async function refreshBrief() { const r = await api("/api/refresh-brief", "POST", {}); alert(r.brief); await load(); }
 async function logIncident(e) { e.preventDefault(); const f = new FormData(e.target);
   try { await api("/api/incidents", "POST", {title: f.get("title"), severity: f.get("severity"), mttr_mins: +f.get("mttr_mins")}); }
@@ -113,28 +138,53 @@ async function addBacklog(e) { e.preventDefault(); const f = new FormData(e.targ
   await api("/api/backlog", "POST", {title: f.get("title"), reach: +f.get("reach"), impact: +f.get("impact"), confidence: +f.get("confidence"), effort: +f.get("effort"), team: f.get("team"), type: f.get("type")}); await load(); return false; }
 async function setBacklog(id, status) { await api("/api/backlog/" + id, "PATCH", {status}); await load(); }
 async function delBacklog(id) { if (confirm("Delete this backlog item?")) { await api("/api/backlog/" + id, "DELETE"); await load(); } }
-async function triage(e) { e.preventDefault(); const f = new FormData(e.target);
-  const r = await api("/api/triage", "POST", {text: f.get("text"), save: !!f.get("save")});
-  $("#triageOut").innerHTML = `<p><small>Triage source: ${r.llm_used ? "LLM — gpt-4o-mini (grounded in Steps 1–3 + live rows)" : "rule-based (LLM not configured or unavailable)"}</small></p><pre>${esc(JSON.stringify(r, null, 2))}</pre>`; await load(); return false; }
+async function triage(e) { e.preventDefault(); const f = e.target; const btn = f.querySelector("button"); const out = $("#triageOut");
+  btn.disabled = true; out.innerHTML = `<p class="busy"><span class="spinner"></span> Thinking…</p>`;
+  try { const r = await api("/api/triage", "POST", {text: new FormData(f).get("text"), save: !!new FormData(f).get("save")});
+    LAST.triage = `<p><small>Triage source: ${r.llm_used ? "LLM — gpt-4o-mini (grounded in Steps 1–3 + live rows)" : "rule-based (LLM not configured or unavailable)"}</small></p><pre>${esc(JSON.stringify(r, null, 2))}</pre>`;
+    out.innerHTML = LAST.triage; await load();
+  } catch (err) { LAST.triage = `<p class="error">Triage failed: ${esc(err.message)}</p>`; out.innerHTML = LAST.triage; }
+  finally { btn.disabled = false; }
+  return false; }
 async function addDet(e) { e.preventDefault(); await api("/api/detections", "POST", {name: new FormData(e.target).get("name")}); await load(); return false; }
 async function setDet(id, stage) { await api("/api/detections/" + id, "PATCH", {stage}); await load(); }
 async function setTel(id, status) { await api("/api/telemetry/" + id, "PATCH", {status}); await load(); }
 async function approvePb(id) { try { await api("/api/playbooks/" + id + "/approve", "POST", {approver: document.getElementById("ap-" + id).value}); } catch (err) { alert(err.message); } await load(); }
 async function addRoad(e) { e.preventDefault(); const f = new FormData(e.target); await api("/api/roadmap", "POST", {title: f.get("title"), quarter: f.get("quarter")}); await load(); return false; }
 async function toggleCheck(id, idx) { await api(`/api/launches/${id}/checks/${idx}/toggle`, "POST", {}); await load(); }
-async function ask(e) { e.preventDefault(); const r = await api("/api/ask", "POST", {question: new FormData(e.target).get("q")});
-  const rs = r.reasoning || r;
-  const s1 = rs.step1_mitre || {}, s2 = rs.step2_nist || {}, s3 = rs.step3_decision || {};
-  $("#askOut").innerHTML = `<div class="brief"><p><small>Answer source: ${r.llm_used ? "LLM — gpt-4o-mini (grounded in Steps 1–3 + live rows)" : "rule-based (LLM not configured or unavailable)"}</small></p><p>${esc(r.summary)}</p>
-    ${r.llm_answer ? `<h3>LLM answer</h3><pre>${esc(r.llm_answer)}</pre>` : ""}
-    <h3>Reasoning — Steps 1–3</h3>
-    <p><b>Step 1 MITRE:</b> ${s1.technique ? esc(s1.technique + " " + (s1.technique_name || "") + " / " + s1.tactic + " (" + s1.confidence + ")") : esc(s1.note || "no MITRE technique matched — human review required")}</p>
-    <p><b>Step 2 NIST CSF 2.0:</b> ${esc(s2.function || "")} — ${esc(s2.category || "")}: ${esc(s2.rationale || "")}</p>
-    <p><b>Step 3 Decision:</b> priority ${esc(s3.priority || "")}, owner ${esc(s3.owner || "")}, approval required: ${s3.approval_required ? "yes" : "no"}, success: ${esc(s3.success_criteria || "")}</p>
-    <ul>${r.actions.map(a => `<li>${esc(a)}</li>`).join("")}</ul><p><b>Risks:</b></p><ul>${r.risks.map(a => `<li>${esc(a)}</li>`).join("")}</ul></div>`; return false; }
-async function draft(e) { e.preventDefault(); const f = new FormData(e.target);
-  const r = await api("/api/draft", "POST", {kind: f.get("kind"), topic: f.get("topic"), backlog_id: f.get("bid") ? +f.get("bid") : null});
-  $("#draftOut").innerHTML = `<p><small>Draft source: ${r.llm_used ? "LLM — gpt-4o-mini" : "rule-based (LLM not configured or unavailable)"}</small></p><pre>${esc(r.document)}</pre>` + (r.llm_answer ? `<h3>LLM draft — gpt-4o-mini</h3><pre>${esc(r.llm_answer)}</pre>` : ""); return false; }
+async function ask(e) { e.preventDefault(); const f = e.target; const btn = f.querySelector("button"); const out = $("#askOut");
+  btn.disabled = true; out.innerHTML = `<p class="busy"><span class="spinner"></span> Thinking…</p>`;
+  try {
+    const r = await api("/api/ask", "POST", {question: new FormData(f).get("q")});
+    if (r.off_topic) {
+      LAST.ask = `<div class="brief"><p>${esc(r.summary)}</p></div>`;
+    } else {
+      const rs = r.reasoning || r;
+      const s1 = rs.step1_mitre || {}, s2 = rs.step2_nist || {}, s3 = rs.step3_decision || {};
+      LAST.ask = `<div class="brief"><p><small>Answer source: ${r.llm_used ? "LLM — gpt-4o-mini (grounded in Steps 1–3 + live rows)" : "rule-based (LLM not configured or unavailable)"}</small></p><p>${esc(r.summary)}</p>
+      ${r.llm_answer ? `<h3>LLM answer</h3><pre>${esc(r.llm_answer)}</pre>` : ""}
+      ${r.llm_error ? `<p class="error">LLM configured but the last call failed (${esc(r.llm_error)}) — check the key and redeploy.</p>` : ""}
+      <h3>Reasoning — Steps 1–3</h3>
+      <p><b>Step 1 MITRE:</b> ${s1.technique ? esc(s1.technique + " " + (s1.technique_name || "") + " / " + s1.tactic + " (" + s1.confidence + ")") : esc(s1.note || "no MITRE technique matched — human review required")}</p>
+      <p><b>Step 2 NIST CSF 2.0:</b> ${esc(s2.function || "")} — ${esc(s2.category || "")}: ${esc(s2.rationale || "")}</p>
+      <p><b>Step 3 Decision:</b> priority ${esc(s3.priority || "")}, owner ${esc(s3.owner || "")}, approval required: ${s3.approval_required ? "yes" : "no"}, success: ${esc(s3.success_criteria || "")}</p>
+      <ul>${(r.actions || []).map(a => `<li>${esc(a)}</li>`).join("")}</ul><p><b>Risks:</b></p><ul>${(r.risks || []).map(a => `<li>${esc(a)}</li>`).join("")}</ul></div>`;
+    }
+    out.innerHTML = LAST.ask;
+  } catch (err) {
+    LAST.ask = `<div class="brief"><p class="error">Ask failed: ${esc(err.message)}</p><p>The request did not return an answer. The service may be waking from spin-down — wait a few seconds and try again.</p></div>`;
+    out.innerHTML = LAST.ask;
+  } finally { btn.disabled = false; }
+  return false; }
+async function draft(e) { e.preventDefault(); const f = e.target; const btn = f.querySelector("button"); const out = $("#draftOut");
+  btn.disabled = true; out.innerHTML = `<p class="busy"><span class="spinner"></span> Thinking…</p>`;
+  try { const fd = new FormData(f);
+    const r = await api("/api/draft", "POST", {kind: fd.get("kind"), topic: fd.get("topic"), backlog_id: fd.get("bid") ? +fd.get("bid") : null});
+    LAST.draft = `<p><small>Draft source: ${r.llm_used ? "LLM — gpt-4o-mini" : "rule-based (LLM not configured or unavailable)"}</small></p><pre>${esc(r.document)}</pre>` + (r.llm_answer ? `<h3>LLM draft — gpt-4o-mini</h3><pre>${esc(r.llm_answer)}</pre>` : "");
+    out.innerHTML = LAST.draft;
+  } catch (err) { LAST.draft = `<p class="error">Draft failed: ${esc(err.message)}</p>`; out.innerHTML = LAST.draft; }
+  finally { btn.disabled = false; }
+  return false; }
 async function refreshThreatIntel() { try { const r = await api("/api/threat-intel/refresh", "POST", {}); alert("Threat intel refresh: " + r.status + " — " + r.sources.map(s => s.source + ": " + s.status).join(", ")); } catch (err) { alert(err.message); } await load(); }
 async function addMitigation(tactic) { try { const r = await api("/api/mitre/mitigations/" + encodeURIComponent(tactic) + "/create-backlog", "POST", {}); alert("Added to backlog: " + r.title + " (RICE " + r.rice + ")"); } catch (err) { alert(err.message); } await load(); }
 nav(); load();
